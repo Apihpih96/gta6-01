@@ -2,20 +2,31 @@
  * On-foot third-person character: low-poly stylised person, WASD movement
  * relative to camera, running, jumping with gravity, building collision with
  * slide-along, walk animation, faces movement direction.
+ *
+ * Also exports `buildPersonMesh` for reusing the same character style in
+ * pedestrians and other NPCs.
  */
 
 import * as THREE from 'three';
 import { PLAYER, CAMERA } from './config.js';
 
-/** Build the player character mesh (group of boxes/capsules). */
-function buildCharacterMesh() {
+/** Build a low-poly person mesh (group). Accepts optional colour overrides. */
+export function buildPersonMesh(opts = {}) {
+  const {
+    shirtColor = 0x3366cc,
+    pantsColor = 0x333355,
+    skinColor = 0xd4a06a,
+    shoeColor = 0x222222,
+    hairColor = 0x221100,
+  } = opts;
+
   const group = new THREE.Group();
 
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3366cc, roughness: 0.7 }); // shirt
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd4a06a, roughness: 0.8 });
-  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x333355, roughness: 0.8 });
-  const shoeMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: 0x221100, roughness: 0.9 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.7 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.8 });
+  const pantsMat = new THREE.MeshStandardMaterial({ color: pantsColor, roughness: 0.8 });
+  const shoeMat = new THREE.MeshStandardMaterial({ color: shoeColor, roughness: 0.6 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: hairColor, roughness: 0.9 });
 
   // Torso
   const torsoGeo = new THREE.BoxGeometry(0.6, 0.7, 0.35);
@@ -71,15 +82,14 @@ function buildCharacterMesh() {
   rightShoe.position.set(0.15, 0.15, 0.05);
   group.add(rightShoe);
 
-  // Store references for animation
   group.userData = { leftArm, rightArm, leftLeg, rightLeg };
 
   return group;
 }
 
-/** Create the player state and mesh. Returns { mesh, state, update }. */
+/** Create the player state and mesh. Returns { mesh, state, update, updateCamera }. */
 export function createPlayer(scene, cityColliders) {
-  const mesh = buildCharacterMesh();
+  const mesh = buildPersonMesh();
   scene.add(mesh);
 
   const state = {
@@ -90,18 +100,16 @@ export function createPlayer(scene, cityColliders) {
     cash: 0,
     wanted: 0,
     speed: 0,
-    yaw: 0, // camera horizontal angle
-    pitch: 0, // camera vertical angle
+    yaw: 0,
+    pitch: 0,
     cameraDistance: CAMERA.defaultDistance,
     walkCycle: 0,
   };
 
   // Find a valid spawn position (not inside a building)
-  state.position.set(0, 0, 0);
   for (const col of cityColliders) {
     if (state.position.x > col.minX && state.position.x < col.maxX &&
         state.position.z > col.minZ && state.position.z < col.maxZ) {
-      // Spawn just outside this collider
       state.position.x = col.maxX + PLAYER.radius + 1;
       break;
     }
@@ -110,12 +118,10 @@ export function createPlayer(scene, cityColliders) {
   /** Resolve collision against building footprints with slide-along. */
   function resolveCollisions(pos) {
     for (const col of cityColliders) {
-      const overlapX = Math.min(pos.x + PLAYER.radius - col.minX, col.maxX - (pos.x - PLAYER.radius));
-      const overlapZ = Math.min(pos.z + PLAYER.radius - col.minZ, col.maxZ - (pos.z - PLAYER.radius));
-
       if (pos.x + PLAYER.radius > col.minX && pos.x - PLAYER.radius < col.maxX &&
           pos.z + PLAYER.radius > col.minZ && pos.z - PLAYER.radius < col.maxZ) {
-        // Push out along the shallowest axis
+        const overlapX = Math.min(pos.x + PLAYER.radius - col.minX, col.maxX - (pos.x - PLAYER.radius));
+        const overlapZ = Math.min(pos.z + PLAYER.radius - col.minZ, col.maxZ - (pos.z - PLAYER.radius));
         if (overlapX < overlapZ) {
           pos.x = pos.x < (col.minX + col.maxX) / 2 ? col.minX - PLAYER.radius : col.maxX + PLAYER.radius;
         } else {
@@ -129,7 +135,6 @@ export function createPlayer(scene, cityColliders) {
   function update(actions, dt) {
     const { forward, backward, left, right, run, jump } = actions;
 
-    // Movement direction relative to camera yaw
     const moveDir = new THREE.Vector3();
     if (forward) moveDir.z -= 1;
     if (backward) moveDir.z += 1;
@@ -139,7 +144,6 @@ export function createPlayer(scene, cityColliders) {
     const isMoving = moveDir.lengthSq() > 0;
     if (isMoving) {
       moveDir.normalize();
-      // Rotate movement by camera yaw
       const cos = Math.cos(state.yaw);
       const sin = Math.sin(state.yaw);
       const rx = moveDir.x * cos - moveDir.z * sin;
@@ -150,39 +154,31 @@ export function createPlayer(scene, cityColliders) {
     const speed = run ? PLAYER.runSpeed : PLAYER.walkSpeed;
     state.speed = isMoving ? speed : 0;
 
-    // Apply horizontal movement
     if (isMoving) {
       state.position.x += moveDir.x * speed * dt;
       state.position.z += moveDir.z * speed * dt;
     }
 
-    // Jump
     if (jump && state.onGround) {
       state.velocity.y = PLAYER.jumpForce;
       state.onGround = false;
     }
 
-    // Gravity
     state.velocity.y -= PLAYER.gravity * dt;
     state.position.y += state.velocity.y * dt;
 
-    // Ground collision
     if (state.position.y <= 0) {
       state.position.y = 0;
       state.velocity.y = 0;
       state.onGround = true;
     }
 
-    // Building collision
     resolveCollisions(state.position);
 
-    // Face movement direction
     if (isMoving) {
-      const targetYaw = Math.atan2(moveDir.x, moveDir.z);
-      state.yaw = targetYaw; // For shot scenes, align character with movement
+      state.yaw = Math.atan2(moveDir.x, moveDir.z);
     }
 
-    // Walk animation
     if (isMoving && state.onGround) {
       state.walkCycle += dt * (run ? 12 : 8);
     } else {
@@ -196,28 +192,19 @@ export function createPlayer(scene, cityColliders) {
     leftLeg.rotation.x = -swing;
     rightLeg.rotation.x = swing;
 
-    // Update mesh position
     mesh.position.copy(state.position);
-    // Character faces camera (for non-movement, face camera direction)
-    if (!isMoving) {
-      mesh.rotation.y = state.yaw;
-    } else {
-      mesh.rotation.y = Math.atan2(moveDir.x, moveDir.z);
-    }
+    mesh.rotation.y = isMoving ? Math.atan2(moveDir.x, moveDir.z) : state.yaw;
   }
 
   /** Update the camera to orbit around the player. */
   function updateCamera(camera, actions, mouse) {
-    // Apply mouse look
     state.yaw += mouse.dx * CAMERA.sensitivity;
     state.pitch -= mouse.dy * CAMERA.sensitivity;
     state.pitch = Math.max(-0.5, Math.min(0.8, state.pitch));
 
-    // Zoom
     state.cameraDistance += mouse.wheel * 0.01;
     state.cameraDistance = Math.max(CAMERA.minDistance, Math.min(CAMERA.maxDistance, state.cameraDistance));
 
-    // Camera position from spherical coords
     const dist = state.cameraDistance;
     const camX = state.position.x + Math.sin(state.yaw) * Math.cos(state.pitch) * dist;
     const camY = state.position.y + CAMERA.heightOffset + Math.sin(state.pitch) * dist * 0.5;

@@ -38,11 +38,18 @@ export function shuffle(rng, arr) {
   return arr;
 }
 
-/** Deterministic seed from a string (simple hash). */
+/** Deterministic seed from a string (simple djb2-style hash). */
 export function hashSeed(str) {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
     h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
   }
+  return h >>> 0;
+}
+
+/** Deterministic seed from two numeric seeds (used for combining scene + world seed). */
+export function combineSeeds(a, b) {
+  let h = a | 0;
+  h = (Math.imul(31, h) + (b | 0)) | 0;
   return h >>> 0;
 }

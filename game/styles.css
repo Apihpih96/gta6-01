@@ -1,4 +1,4 @@
-/** Solar Coast — HUD and UI styling, sun-soaked crime-game look. */
+/** Solar Coast — HUD and UI styling, sun-soaked coastal look. */
 
 html, body {
   margin: 0;
@@ -137,14 +137,34 @@ html, body {
   transform: translateX(-50%);
 }
 
-/* ---- Start screen ---- */
+/* Contextual interaction prompt (e.g. "Press E to enter") */
+#interact-prompt {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ffffff;
+  font-size: 16px;
+  background: rgba(0,0,0,0.6);
+  padding: 8px 16px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  white-space: nowrap;
+}
+
+/* ---- Start screen — semi-transparent so the 3D city shows through ---- */
 #start-screen {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1a6fc4 0%, #f5d68a 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(26, 111, 196, 0.78) 0%,
+    rgba(245, 214, 138, 0.72) 100%
+  );
   z-index: 200;
 }
 

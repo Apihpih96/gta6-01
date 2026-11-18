@@ -2,14 +2,15 @@
  * Keyboard state, mouse look with pointer lock, action bindings.
  *
  * Controls:
- *   WASD — move       Shift — run      Space — jump
- *   E    — interact   F    — punch      Mouse left — shoot (later)
+ *   WASD — move       Shift — run      Space — jump / handbrake
+ *   E    — interact (enter/exit vehicle)
  *   M    — mute       Esc  — pause      Enter — confirm
  *   Mouse move — camera orbit (when pointer locked)
  *   Wheel — zoom
  */
 
 const keys = new Set();
+const justPressed = new Set();
 let mouseDX = 0;
 let mouseDY = 0;
 let mouseLeft = false;
@@ -20,17 +21,20 @@ let muted = false;
 /** Bind DOM events to capture input. */
 export function bindInput(canvas) {
   window.addEventListener('keydown', (e) => {
+    if (!keys.has(e.code)) {
+      justPressed.add(e.code);
+    }
     keys.add(e.code);
     if (e.code === 'KeyM') {
       muted = !muted;
     }
-    // Prevent scrolling for game keys
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
     }
   });
   window.addEventListener('keyup', (e) => {
     keys.delete(e.code);
+    justPressed.delete(e.code);
   });
 
   canvas.addEventListener('click', () => {
@@ -79,10 +83,10 @@ export function isKeyDown(code) {
   return keys.has(code);
 }
 
-/** Check if a key was just pressed this frame (consumes it). */
+/** Check if a key was just pressed this frame (consumes it from justPressed). */
 export function consumeKey(code) {
-  if (keys.has(code)) {
-    keys.delete(code);
+  if (justPressed.has(code)) {
+    justPressed.delete(code);
     return true;
   }
   return false;
@@ -97,6 +101,7 @@ export function getActions() {
     right: isKeyDown('KeyD') || isKeyDown('ArrowRight'),
     run: isKeyDown('ShiftLeft') || isKeyDown('ShiftRight'),
     jump: consumeKey('Space'),
+    handbrake: isKeyDown('Space'),
     interact: consumeKey('KeyE'),
     punch: consumeKey('KeyF'),
     pause: consumeKey('Escape'),

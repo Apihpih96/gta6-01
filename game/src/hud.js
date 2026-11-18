@@ -1,7 +1,7 @@
 /**
  * HUD DOM updates: health bar, cash, wanted stars, objective text,
  * speed readout, weapon slot, centre message, damage vignette,
- * start screen and pause menu wiring.
+ * interaction prompt, start screen and pause menu wiring.
  */
 
 import { OBJECTIVE_DEFAULT } from './config.js';
@@ -21,6 +21,7 @@ export function createHUD() {
   const newGameBtn = document.getElementById('new-game-btn');
   const continueBtn = document.getElementById('continue-btn');
   const resumeBtn = document.getElementById('resume-btn');
+  const interactPrompt = document.getElementById('interact-prompt');
 
   let messageTimer = 0;
   let objective = OBJECTIVE_DEFAULT;
@@ -35,6 +36,14 @@ export function createHUD() {
   /** Set the persistent objective line. */
   function setObjective(text) {
     objective = text;
+  }
+
+  /** Show or hide the contextual interaction prompt. */
+  function showInteractPrompt(text) {
+    if (interactPrompt) {
+      interactPrompt.textContent = text;
+      interactPrompt.style.opacity = text ? '1' : '0';
+    }
   }
 
   /** Update HUD from game state. */
@@ -71,15 +80,19 @@ export function createHUD() {
       objectiveEl.textContent = objective;
     }
 
-    // Speed
+    // Speed — show km/h when moving or driving
     if (speedEl) {
-      const kmh = Math.round(state.speed * 3.6);
-      speedEl.textContent = kmh + ' km/h';
+      const kmh = Math.round((state.speed || 0) * 3.6);
+      speedEl.textContent = state.mode === 'driving' ? kmh + ' km/h' : (kmh > 0 ? kmh + ' km/h' : '');
     }
 
-    // Weapon slot
+    // Weapon / vehicle indicator
     if (weaponEl) {
-      weaponEl.textContent = state.hasWeapon ? '🔫' : '👊';
+      if (state.mode === 'driving') {
+        weaponEl.textContent = '🚗';
+      } else {
+        weaponEl.textContent = state.hasWeapon ? '🔫' : '👊';
+      }
     }
 
     // Message fade
@@ -114,7 +127,7 @@ export function createHUD() {
     }
   }
 
-  /** Register button callbacks. Returns { onStartGame, onContinue, onResume }. */
+  /** Register button callbacks. */
   function wireButtons(callbacks) {
     const { onStartGame, onContinue, onResume } = callbacks;
     if (newGameBtn) newGameBtn.addEventListener('click', onStartGame);
@@ -128,6 +141,7 @@ export function createHUD() {
     setObjective,
     showStartScreen,
     showPauseScreen,
+    showInteractPrompt,
     wireButtons,
   };
 }

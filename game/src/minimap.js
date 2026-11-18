@@ -1,5 +1,6 @@
 /**
- * 2D canvas top-down minimap: draws roads, water, player arrow, and mission markers.
+ * 2D canvas top-down minimap: draws roads, water, player arrow,
+ * traffic dots, pedestrian dots, and parked-car markers.
  */
 
 import { CITY, PALETTE } from './config.js';
@@ -18,16 +19,16 @@ export function createMinimap(container) {
 
   function worldToMap(wx, wz) {
     return [
-      canvas.width / 2 + (wx) * scale,
-      canvas.height / 2 + (wz) * scale,
+      canvas.width / 2 + wx * scale,
+      canvas.height / 2 + wz * scale,
     ];
   }
 
-  /** Draw the minimap frame. */
-  function draw(playerPos, colliders) {
+  /** Draw one frame of the minimap. */
+  function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Background (sand/ground)
+    // Background (sand)
     ctx.fillStyle = '#' + PALETTE.sand.toString(16).padStart(6, '0');
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -43,9 +44,7 @@ export function createMinimap(container) {
       const pos = -halfSize + i * totalBlock;
       const [rx, rz] = worldToMap(pos, pos);
       const rw = CITY.roadWidth * scale;
-      // Vertical road
       ctx.fillRect(rx - rw / 2, 0, rw, canvas.height);
-      // Horizontal road
       ctx.fillRect(0, rz - rw / 2, canvas.width, rw);
     }
 
@@ -55,6 +54,35 @@ export function createMinimap(container) {
       const [x1, z1] = worldToMap(col.minX, col.minZ);
       const [x2, z2] = worldToMap(col.maxX, col.maxZ);
       ctx.fillRect(x1, z1, x2 - x1, z2 - z1);
+    }
+
+    // Parked car markers (small grey squares)
+    if (parkedCars) {
+      ctx.fillStyle = 'rgba(150,150,150,0.5)';
+      for (const car of parkedCars) {
+        const [cx, cz] = worldToMap(car.position.x, car.position.z);
+        ctx.fillRect(cx - 2, cz - 2, 4, 4);
+      }
+    }
+
+    // Traffic cars (small coloured dots)
+    if (trafficCars) {
+      for (const car of trafficCars) {
+        const [cx, cz] = worldToMap(car.position.x, car.position.z);
+        ctx.fillStyle = '#' + car.color.toString(16).padStart(6, '0');
+        ctx.beginPath();
+        ctx.arc(cx, cz, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Pedestrians (tiny white dots)
+    if (pedestrians) {
+      ctx.fillStyle = 'rgba(255,255,200,0.7)';
+      for (const p of pedestrians) {
+        const [px, pz] = worldToMap(p.position.x, p.position.z);
+        ctx.fillRect(px - 1, pz - 1, 2, 2);
+      }
     }
 
     // Player arrow
