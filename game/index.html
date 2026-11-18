@@ -3,17 +3,83 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
-<style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-</style>
+<title>Solar Coast</title>
+<link rel="stylesheet" href="./styles.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<canvas id="game-canvas" aria-label="Solar Coast: an open-world coastal crime game"></canvas>
+<p id="boot-error" role="alert" style="display:none"></p>
+
+<!-- HUD -->
+<div id="hud" aria-hidden="true">
+  <!-- Health bar -->
+  <div id="health-bar-container">
+    <div id="health-bar-fill" style="width:100%;background:#44cc44"></div>
+  </div>
+
+  <!-- Cash -->
+  <div id="cash">$0</div>
+
+  <!-- Wanted stars -->
+  <div id="wanted-stars">☆☆☆☆☆</div>
+
+  <!-- Objective line -->
+  <div id="objective">Explore the city</div>
+
+  <!-- Speed readout -->
+  <div id="speed">0 km/h</div>
+
+  <!-- Weapon slot -->
+  <div id="weapon-slot">👊</div>
+
+  <!-- Centre message -->
+  <div id="center-message"></div>
+
+  <!-- Damage vignette -->
+  <div id="damage-vignette"></div>
+
+  <!-- Minimap -->
+  <div id="minimap-container"></div>
+</div>
+
+<!-- Start screen overlay -->
+<div id="start-screen">
+  <div id="start-content">
+    <h1 id="game-title">SOLAR COAST</h1>
+    <p id="game-subtitle">An open-world coastal crime game</p>
+    <div id="start-buttons">
+      <button id="new-game-btn">New Game</button>
+      <button id="continue-btn" disabled>Continue</button>
+    </div>
+    <div id="controls">
+      <h3>Controls</h3>
+      <table>
+        <tr><td>WASD</td><td>Move</td></tr>
+        <tr><td>Shift</td><td>Run</td></tr>
+        <tr><td>Space</td><td>Jump</td></tr>
+        <tr><td>Mouse</td><td>Look</td></tr>
+        <tr><td>E</td><td>Interact</td></tr>
+        <tr><td>Esc</td><td>Pause</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pause overlay -->
+<div id="pause-screen" style="display:none">
+  <div id="pause-content">
+    <h2>Paused</h2>
+    <button id="resume-btn">Resume</button>
+  </div>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

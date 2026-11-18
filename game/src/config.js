@@ -1,61 +1,73 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
+/**
+ * Tuning constants for Solar Coast — speeds, city size, palette, wanted timings.
+ */
 
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
+/** City grid parameters */
+export const CITY = {
+  /** Number of blocks along each axis */
+  blocksPerAxis: 12,
+  /** Width of one block (world units) */
+  blockSize: 60,
+  /** Width of a road between blocks */
+  roadWidth: 14,
+  /** Sidewalk width */
+  sidewalkWidth: 3,
+  /** Beach side: blocks on the +X edge become beach/water */
+  beachEdge: true,
+};
 
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+/** Derived: total city half-size in world units */
+export const CITY_HALF_SIZE =
+  CITY.blocksPerAxis * (CITY.blockSize + CITY.roadWidth) * 0.5;
 
+/** Player movement */
 export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
+  walkSpeed: 6,
+  runSpeed: 12,
+  jumpForce: 8,
+  gravity: 20,
+  radius: 0.5,
+  height: 1.8,
 };
 
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
+/** Camera */
+export const CAMERA = {
+  defaultDistance: 8,
+  minDistance: 4,
+  maxDistance: 16,
+  heightOffset: 3,
+  sensitivity: 0.003,
 };
 
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
-};
-
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
+/** Sun-soaked coastal palette */
 export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
+  skyTop: 0x1a6fc4,
+  skyBottom: 0xf5d68a,
+  sun: 0xfff4b0,
+  sea: 0x1a8ab5,
+  sand: 0xe8c87a,
+  concrete: 0xb0b0b0,
+  road: 0x444444,
+  roadLine: 0xdddd44,
+  sidewalk: 0xc8c0b0,
+  buildingBase: [
+    0xf0e0c8, 0xe8d4b8, 0xd4a87c, 0xc89070, 0xb88068,
+    0xa07060, 0x906868, 0xc0a080, 0xe0c8a0, 0xd8b898,
+    0xf5e8d0, 0xd0b090, 0xc8a888, 0xb89878, 0xa88868,
+  ],
+  windowLit: 0xfff8e0,
+  windowDark: 0x334455,
+  palmTrunk: 0x8b6914,
+  palmLeaf: 0x2d7a2d,
+  lampPost: 0x666666,
+  lampLight: 0xffe8a0,
 };
 
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+/** Wanted system timings (reserved for later sessions) */
+export const WANTED = {
+  starDecayTime: 15,
+  policeSpawnDelay: 5,
+};
 
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+/** Objective text */
+export const OBJECTIVE_DEFAULT = "Explore the city";

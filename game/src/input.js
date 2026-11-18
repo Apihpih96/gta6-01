@@ -1,53 +1,111 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+/**
+ * Keyboard state, mouse look with pointer lock, action bindings.
+ *
+ * Controls:
+ *   WASD — move       Shift — run      Space — jump
+ *   E    — interact   F    — punch      Mouse left — shoot (later)
+ *   M    — mute       Esc  — pause      Enter — confirm
+ *   Mouse move — camera orbit (when pointer locked)
+ *   Wheel — zoom
+ */
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+const keys = new Set();
+let mouseDX = 0;
+let mouseDY = 0;
+let mouseLeft = false;
+let wheelDelta = 0;
+let pointerLocked = false;
+let muted = false;
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+/** Bind DOM events to capture input. */
+export function bindInput(canvas) {
+  window.addEventListener('keydown', (e) => {
+    keys.add(e.code);
+    if (e.code === 'KeyM') {
+      muted = !muted;
+    }
+    // Prevent scrolling for game keys
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+      e.preventDefault();
+    }
   });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+  window.addEventListener('keyup', (e) => {
+    keys.delete(e.code);
   });
 
+  canvas.addEventListener('click', () => {
+    if (!pointerLocked) {
+      canvas.requestPointerLock();
+    }
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    pointerLocked = document.pointerLockElement === canvas;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (pointerLocked) {
+      mouseDX += e.movementX;
+      mouseDY += e.movementY;
+    }
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) mouseLeft = true;
+  });
+  canvas.addEventListener('mouseup', (e) => {
+    if (e.button === 0) mouseLeft = false;
+  });
+
+  canvas.addEventListener('wheel', (e) => {
+    wheelDelta += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+}
+
+/** Consume accumulated mouse movement. Returns { dx, dy, wheel } and resets accumulators. */
+export function consumeMouse() {
+  const dx = mouseDX;
+  const dy = mouseDY;
+  const w = wheelDelta;
+  mouseDX = 0;
+  mouseDY = 0;
+  wheelDelta = 0;
+  return { dx, dy, wheel: w };
+}
+
+/** Check if a key is currently held. */
+export function isKeyDown(code) {
+  return keys.has(code);
+}
+
+/** Check if a key was just pressed this frame (consumes it). */
+export function consumeKey(code) {
+  if (keys.has(code)) {
+    keys.delete(code);
+    return true;
+  }
+  return false;
+}
+
+/** Action bindings: what the player wants to do. */
+export function getActions() {
   return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
+    forward: isKeyDown('KeyW') || isKeyDown('ArrowUp'),
+    backward: isKeyDown('KeyS') || isKeyDown('ArrowDown'),
+    left: isKeyDown('KeyA') || isKeyDown('ArrowLeft'),
+    right: isKeyDown('KeyD') || isKeyDown('ArrowRight'),
+    run: isKeyDown('ShiftLeft') || isKeyDown('ShiftRight'),
+    jump: consumeKey('Space'),
+    interact: consumeKey('KeyE'),
+    punch: consumeKey('KeyF'),
+    pause: consumeKey('Escape'),
+    confirm: consumeKey('Enter') || consumeKey('NumpadEnter'),
+    shoot: mouseLeft,
+    muted,
   };
+}
+
+export function isPointerLocked() {
+  return pointerLocked;
 }
