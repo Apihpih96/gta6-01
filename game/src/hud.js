@@ -1,7 +1,8 @@
 /**
  * HUD DOM updates: health bar, cash, wanted stars, objective text,
  * speed readout, weapon slot, centre message, damage vignette,
- * interaction prompt, start screen and pause menu wiring.
+ * interaction prompt, start screen and pause menu wiring,
+ * mission banners and briefing panels.
  */
 
 import { OBJECTIVE_DEFAULT } from './config.js';
@@ -22,9 +23,15 @@ export function createHUD() {
   const continueBtn = document.getElementById('continue-btn');
   const resumeBtn = document.getElementById('resume-btn');
   const interactPrompt = document.getElementById('interact-prompt');
+  const missionBannerEl = document.getElementById('mission-banner');
+  const briefingPanel = document.getElementById('briefing-panel');
+  const missionSelectEl = document.getElementById('mission-select');
 
   let messageTimer = 0;
   let objective = OBJECTIVE_DEFAULT;
+  let cashDisplayValue = 0;
+  let cashTargetValue = 0;
+  let cashAnimTimer = 0;
 
   /** Show a temporary centre message. */
   function showMessage(text, duration = 2.5) {
@@ -60,9 +67,20 @@ export function createHUD() {
       }
     }
 
-    // Cash
+    // Cash — animate toward target
     if (cashEl) {
-      cashEl.textContent = '$' + state.cash.toLocaleString();
+      if (cashTargetValue !== cashDisplayValue) {
+        cashAnimTimer += dt;
+        if (cashAnimTimer > 0.05) {
+          cashAnimTimer = 0;
+          const diff = cashTargetValue - cashDisplayValue;
+          cashDisplayValue += Math.ceil(diff * 0.15);
+          if (Math.abs(cashTargetValue - cashDisplayValue) < 10) {
+            cashDisplayValue = cashTargetValue;
+          }
+        }
+      }
+      cashEl.textContent = '$' + cashDisplayValue.toLocaleString();
     }
 
     // Wanted stars
@@ -84,6 +102,11 @@ export function createHUD() {
     if (speedEl) {
       const kmh = Math.round((state.speed || 0) * 3.6);
       speedEl.textContent = state.mode === 'driving' ? kmh + ' km/h' : (kmh > 0 ? kmh + ' km/h' : '');
+    }
+
+    // Sync cash target from game state
+    if (state.cash !== cashTargetValue) {
+      cashTargetValue = state.cash;
     }
 
     // Weapon / vehicle indicator
@@ -129,10 +152,97 @@ export function createHUD() {
 
   /** Register button callbacks. */
   function wireButtons(callbacks) {
-    const { onStartGame, onContinue, onResume } = callbacks;
+    const { onStartGame, onContinue, onResume, onMissionSelect } = callbacks;
     if (newGameBtn) newGameBtn.addEventListener('click', onStartGame);
     if (continueBtn) continueBtn.addEventListener('click', onContinue);
     if (resumeBtn) resumeBtn.addEventListener('click', onResume);
+    // Wire mission select buttons dynamically
+    if (missionSelectEl && onMissionSelect) {
+      missionSelectEl.addEventListener('click', (e) => {
+        if (e.target.dataset.missionIdx !== undefined) {
+          onMissionSelect(parseInt(e.target.dataset.missionIdx, 10));
+        }
+      });
+    }
+  }
+
+  /** Show a mission banner (complete/fail/story complete). */
+  function showMissionBanner(text, type) {
+    if (missionBannerEl) {
+      missionBannerEl.textContent = text;
+      missionBannerEl.className = 'mission-banner mission-banner-' + type;
+      missionBannerEl.style.display = 'block';
+      missionBannerEl.style.opacity = '1';
+    }
+  }
+
+  /** Hide the mission banner. */
+  function hideMissionBanner() {
+    if (missionBannerEl) {
+      missionBannerEl.style.opacity = '0';
+      setTimeout(() => {
+        if (missionBannerEl) missionBannerEl.style.display = 'none';
+      }, 500);
+    }
+  }
+
+  /** Show a mission briefing panel. */
+  function showMissionBriefing(missionName, briefingText) {
+    if (briefingPanel) {
+      const titleEl = briefingPanel.querySelector('.briefing-title');
+      const bodyEl = briefingPanel.querySelector('.briefing-body');
+      if (titleEl) titleEl.textContent = missionName;
+      if (bodyEl) bodyEl.textContent = briefingText;
+      briefingPanel.style.display = 'flex';
+      briefingPanel.style.opacity = '0';
+      requestAnimationFrame(() => {
+        briefingPanel.style.transition = 'opacity 0.3s ease';
+        briefingPanel.style.opacity = '1';
+      });
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        if (briefingPanel) {
+          briefingPanel.style.opacity = '0';
+          setTimeout(() => {
+            if (briefingPanel) briefingPanel.style.display = 'none';
+          }, 300);
+        }
+      }, 5000);
+    }
+  }
+
+  /** Update mission select panel with available missions. */
+  function updateMissionSelect(unlockedIndices, missionDefs, completedIds) {
+    if (!missionSelectEl) return;
+    // Clear existing buttons
+    missionSelectEl.innerHTML = '';
+    for (const idx of unlockedIndices) {
+      const def = missionDefs[idx];
+      if (!def) continue;
+      const btn = document.createElement('button');
+      btn.dataset.missionIdx = String(idx);
+      btn.className = completedIds.has(def.id) ? 'mission-btn completed' : 'mission-btn';
+      btn.textContent = def.name;
+      if (completedIds.has(def.id)) {
+        btn.title = 'Completed ✓';
+        btn.disabled = true;
+      }
+      missionSelectEl.appendChild(btn);
+    }
+  }
+
+  /** Show or hide the mission select panel. */
+  function showMissionSelect(show) {
+    if (missionSelectEl) {
+      missionSelectEl.style.display = show ? 'flex' : 'none';
+    }
+  }
+
+  /** Set the continue button enabled/disabled state. */
+  function setContinueEnabled(enabled) {
+    if (continueBtn) {
+      continueBtn.disabled = !enabled;
+    }
   }
 
   return {
@@ -143,5 +253,11 @@ export function createHUD() {
     showPauseScreen,
     showInteractPrompt,
     wireButtons,
+    showMissionBanner,
+    hideMissionBanner,
+    showMissionBriefing,
+    updateMissionSelect,
+    showMissionSelect,
+    setContinueEnabled,
   };
 }

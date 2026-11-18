@@ -209,5 +209,6 @@ export function createCombatSystem(scene, colliders, hud, wantedSystem) {
     isLunging,
     hasHitFlash,
     getPlayerHealthRaw: () => playerHealth,
+    setPlayerHealthRaw: (h) => { playerHealth = Math.max(0, Math.min(100, h)); },
   };
 }

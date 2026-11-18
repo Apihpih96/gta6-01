@@ -4,7 +4,18 @@
 [![rank](https://make.fun/badge/gta6-01/Apihpih96/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/Apihpih96/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Solar Coast** — an open-world coastal crime game set in a sun-soaked procedural city. Explore on foot or behind the wheel of a drivable car, navigate traffic, and watch pedestrians scatter as you speed past. Built with three.js — zero network requests, everything runs locally.
+**Solar Coast** — an open-world coastal crime game set in a sun-soaked procedural city. Explore on foot or behind the wheel of a drivable car, navigate traffic, take on missions for a local fixer, and watch pedestrians scatter as you speed past. Built with three.js — zero network requests, everything runs locally.
+
+## Story
+
+You arrive in Solar Coast, a sun-drenched coastal city, and quickly cross paths with **Rico Valdez** — a well-connected fixer who always needs reliable people. Rico introduces you to the crew, puts you on jobs, and pulls strings when the heat comes down.
+
+- **First Wheels** — Rico needs a red sedan "borrowed" from the beachfront and delivered to his garage.
+- **Courier Run** — A timed package run across town with two drop-offs. Don't attract attention.
+- **Shakedown** — Three shopkeepers owe Rico protection money. They won't pay willingly — one fights back.
+- **The Getaway** — The cops are onto you. Lose a 3-star wanted level, then make it to the safehouse.
+
+Complete all four missions to finish the story and see your total earnings.
 
 ## Features
 
@@ -16,8 +27,10 @@
 - **Wanted level** — 0–5 stars that rise from crimes (stealing cars, hitting peds, punching) and decay when you lay low
 - **Police pursuit** — black-and-white patrol cars with flashing light bars, on-foot officers at 3+ stars, ramming and bust logic
 - **Combat** — punch with F or left-click, pedestrian health and flee response, some fight back, player health regen
-- **Top-down minimap** — roads, buildings, parked cars, traffic, pedestrians, police blips, and player arrow
-- **HUD** — health bar, cash, wanted stars, speed readout, contextual prompts, BUSTED/WASTED overlays
+- **Missions & story** — 4-mission original story arc with briefings, objective tracking, gold markers and 3D beacons, timed objectives, cash rewards, and a "Story Complete" screen
+- **Save/load** — auto-save every 30 seconds and on mission complete; "Continue" button on start screen; localStorage persistence with corrupt-save protection
+- **Top-down minimap** — roads, buildings, parked cars, traffic, pedestrians, police blips, player arrow, and pulsing gold mission markers
+- **HUD** — health bar, animated cash counter, wanted stars, speed readout, contextual prompts, mission banners, BUSTED/WASTED overlays
 
 ## Run it
 

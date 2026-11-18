@@ -2,7 +2,8 @@
  * Deterministic screenshot staging.
  *
  * Read URL params ?shot=<scene>&seed=<n>.
- * Scenes: "start" (title over city), "roam" (player on street), "drive" (behind a car).
+ * Scenes: "start" (title over city), "roam" (player on street), "drive" (behind a car),
+ *         "chase" (police pursuit), "mission" (on foot at M1 objective with marker/beacon).
  * Fully deterministic: same seed => same frame.
  */
 
@@ -18,7 +19,7 @@ export function parseShotParams() {
 
 /** Check if we are in a shot scene (auto-start, no title screen blocking). */
 export function isShotScene(scene) {
-  return scene === 'start' || scene === 'roam' || scene === 'drive' || scene === 'chase';
+  return scene === 'start' || scene === 'roam' || scene === 'drive' || scene === 'chase' || scene === 'mission';
 }
 
 /** Apply shot-specific camera and player positioning. */
@@ -67,5 +68,19 @@ export function setupShotScene(scene, seed, playerState, camera) {
     // Side-rear angle to show both player car and pursuing police
     camera.position.set(12, 7, 18);
     camera.lookAt(0, 1.5, -5);
+  } else if (scene === 'mission') {
+    // Player on foot at M1 objective (First Wheels — find the red sedan near beach)
+    // Positioned at the car-steal objective marker with gold beacon visible
+    playerState.position.set(-30, 0, 50);
+    playerState.yaw = 0.8;
+    playerState.pitch = 0.15;
+    playerState.cameraDistance = 10;
+
+    camera.position.set(
+      playerState.position.x + Math.sin(playerState.yaw) * Math.cos(playerState.pitch) * playerState.cameraDistance,
+      playerState.position.y + 3 + Math.sin(playerState.pitch) * playerState.cameraDistance * 0.5,
+      playerState.position.z + Math.cos(playerState.yaw) * Math.cos(playerState.pitch) * playerState.cameraDistance
+    );
+    camera.lookAt(playerState.position.x, playerState.position.y + 1.2, playerState.position.z);
   }
 }

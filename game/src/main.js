@@ -1,7 +1,8 @@
 /**
  * Bootstrap: renderer, scene, camera, clock, game state, game loop
  * with fixed-step updates, city + player + HUD + minimap + shots wiring.
- * Now includes vehicles, traffic AI, pedestrians, wanted level, police, and combat.
+ * Now includes vehicles, traffic AI, pedestrians, wanted level, police,
+ * combat, missions/story, and save/load.
  *
  * Exposes window.__game for debugging.
  */
@@ -21,6 +22,8 @@ import { VEHICLE, CAMERA, WANTED } from './config.js';
 import { createWantedSystem } from './wanted.js';
 import { createPoliceSystem, buildPoliceCarMesh } from './police.js';
 import { createCombatSystem } from './combat.js';
+import { createMissionSystem } from './missions.js';
+import { createSaveSystem } from './save.js';
 
 // ---- Bootstrap ----
 const canvas = document.getElementById('game-canvas');
@@ -64,8 +67,14 @@ const wantedSystem = createWantedSystem();
 // ---- Combat system ----
 const combatSystem = createCombatSystem(scene, colliders, null, wantedSystem);
 
+// ---- Mission system ----
+const missionSystem = createMissionSystem(null, wantedSystem, combatSystem);
+
 // ---- Police system ----
 const policeSystem = createPoliceSystem(scene, seed, colliders, roadData, null);
+
+// ---- Save system ----
+const saveSystem = createSaveSystem(null);
 
 // ---- Game state ----
 const gameState = {
@@ -139,33 +148,137 @@ if (isShotScene(shotScene)) {
       });
     }
   }
+
+  // For "mission" scene, set up M1 context with a target car and marker
+  if (shotScene === 'mission') {
+    // Place a red sedan at the M1 objective
+    const targetCar = vehicleSystem.createCar(
+      new THREE.Vector3(-30, 0.6, 50),
+      0,
+      0xcc2222
+    );
+    targetCar.isMissionTarget = true;
+
+    // Accept M1 so the marker shows
+    missionSystem.acceptMission(0);
+    missionSystem.onVehicleEnter(targetCar, gameState); // advance past "find car" step
+  }
+}
+
+// ---- Mission 3D beacon (pulsing gold marker at active objective) ----
+let missionBeacon = null;
+let missionBeaconLight = null;
+
+function updateMissionBeacon(markerPos, dt) {
+  // Remove old beacon
+  if (missionBeacon) {
+    scene.remove(missionBeacon);
+    missionBeacon = null;
+  }
+  if (missionBeaconLight) {
+    scene.remove(missionBeaconLight);
+    missionBeaconLight = null;
+  }
+
+  if (!markerPos) return;
+
+  const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.004);
+  const height = 8;
+
+  // Gold diamond beacon
+  const beaconGeo = new THREE.OctahedronGeometry(0.8 * pulse);
+  const beaconMat = new THREE.MeshStandardMaterial({
+    color: 0xffdd00,
+    emissive: 0xffaa00,
+    emissiveIntensity: 0.8,
+    transparent: true,
+    opacity: 0.9,
+  });
+  missionBeacon = new THREE.Mesh(beaconGeo, beaconMat);
+  missionBeacon.position.set(markerPos.x, height, markerPos.z);
+  missionBeacon.rotation.y = performance.now() * 0.002;
+  scene.add(missionBeacon);
+
+  // Glow light
+  missionBeaconLight = new THREE.PointLight(0xffdd00, 2, 15);
+  missionBeaconLight.position.set(markerPos.x, height, markerPos.z);
+  scene.add(missionBeaconLight);
+
+  // Ground ring
+  const ringGeo = new THREE.RingGeometry(1.5, 2.2, 16);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xffdd00,
+    transparent: true,
+    opacity: 0.4 * pulse,
+    side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(markerPos.x, 0.1, markerPos.z);
+  scene.add(ring);
+
+  // Cleanup ring on next update (it's temporary)
+  ring.userData.isBeaconPart = true;
+  if (!missionBeacon.userData.parts) missionBeacon.userData.parts = [];
+  missionBeacon.userData.parts.push(ring);
 }
 
 // ---- HUD ----
 const hud = createHUD();
+
+// Check for existing save and enable continue button
+if (saveSystem.hasSave()) {
+  hud.setContinueEnabled(true);
+}
+
 hud.showStartScreen(!gameState.running);
 
 hud.wireButtons({
   onStartGame() {
+    saveSystem.clearSave();
     gameState.running = true;
     gameState.paused = false;
+    gameState.cash = 500;
+    gameState.health = 100;
     hud.showStartScreen(false);
     hud.showMessage('Welcome to Solar Coast!');
     canvas.requestPointerLock();
   },
   onContinue() {
-    gameState.running = true;
-    gameState.paused = false;
-    hud.showStartScreen(false);
-    hud.showMessage('Welcome to Solar Coast!');
-    canvas.requestPointerLock();
+    const loaded = saveSystem.load(gameState, player, wantedSystem, combatSystem, missionSystem);
+    if (loaded) {
+      gameState.running = true;
+      gameState.paused = false;
+      hud.showStartScreen(false);
+      hud.showMessage('Welcome back!');
+      canvas.requestPointerLock();
+    } else {
+      hud.showMessage('No valid save found — starting new game');
+      gameState.cash = 500;
+      gameState.running = true;
+      gameState.paused = false;
+      hud.showStartScreen(false);
+      canvas.requestPointerLock();
+    }
   },
   onResume() {
     gameState.paused = false;
     hud.showPauseScreen(false);
     canvas.requestPointerLock();
   },
+  onMissionSelect(idx) {
+    const result = missionSystem.acceptMission(idx);
+    if (result) {
+      hud.showPauseScreen(false);
+      hud.showMessage('Mission accepted: ' + result.def.name);
+      canvas.requestPointerLock();
+    }
+  },
 });
+
+// Wire HUD to mission and save systems
+hud._missionSystem = missionSystem;
+hud._saveSystem = saveSystem;
 
 // ---- Minimap ----
 const minimapContainer = document.getElementById('minimap-container');
@@ -228,6 +341,9 @@ function enterVehicle(car) {
 
   // Crime: stealing a car
   wantedSystem.addHeat(1, 'stolen_vehicle');
+
+  // Check mission: M1 step — steal the car
+  missionSystem.onVehicleEnter(activeCar, gameState);
 }
 
 /** Exit the current vehicle. */
@@ -291,6 +407,9 @@ let accumulator = 0;
 const clock = new THREE.Clock();
 let playerPos = new THREE.Vector3(); // Track for HUD/minimap outside the update loop
 
+// Re-wire HUD to use mission/save
+hud._updateObjective = hud.setObjective;
+
 function gameLoop() {
   requestAnimationFrame(gameLoop);
 
@@ -298,9 +417,17 @@ function gameLoop() {
   accumulator += dt;
 
   if (!gameState.running || gameState.paused) {
+    // Update mission beacon even when paused (for screenshots)
+    if (isShotScene(shotScene) || gameState.paused) {
+      const markerPos = missionSystem.getActiveMarkerPos();
+      updateMissionBeacon(markerPos, dt);
+    }
     renderer.render(scene, camera);
     return;
   }
+
+  // Auto-save
+  saveSystem.autoSave(dt, gameState, player, wantedSystem, combatSystem, missionSystem);
 
   // Handle busted state
   if (gameState.busted) {
@@ -347,7 +474,14 @@ function gameLoop() {
       hud.showPauseScreen(gameState.paused);
       if (gameState.paused) {
         document.exitPointerLock();
+        // Show mission select on start screen
+        const unlocked = missionSystem.getUnlockedMissions();
+        const missionDefs = missionSystem.getAllMissionDefs();
+        const completed = missionSystem.getCompletedMissions();
+        hud.updateMissionSelect(unlocked, missionDefs, completed);
+        hud.showMissionSelect(true);
       } else {
+        hud.showMissionSelect(false);
         canvas.requestPointerLock();
       }
       continue;
@@ -371,18 +505,27 @@ function gameLoop() {
       if (punchResult && punchResult.hit && punchResult.ped) {
         const events = combatSystem.handlePedHit(punchResult.ped, pedSystem.getPedestrians());
 
-        // Crime: punching a pedestrian
-        wantedSystem.addHeat(1, 'assault');
+        // Check mission: M3 shakedown
+        const pedPos = punchResult.ped.position;
+        const missionPunch = missionSystem.tryPunchMissionPed(player.position, {
+          hit: true,
+          pedPos,
+        });
 
-        // Check if police nearby for extra heat
-        const policePositions = policeSystem.getPolicePositions();
-        for (const pp of policePositions) {
-          const dx = pp.x - player.position.x;
-          const dz = pp.z - player.position.z;
-          const dist = Math.sqrt(dx * dx + dz * dz);
-          if (dist < WANTED.policeHeatRadius) {
-            wantedSystem.addHeat(1, 'crime_witnessed');
-            break;
+        // Crime: punching a pedestrian (only if not a mission-collect punch)
+        if (!missionPunch) {
+          wantedSystem.addHeat(1, 'assault');
+
+          // Check if police nearby for extra heat
+          const policePositions = policeSystem.getPolicePositions();
+          for (const pp of policePositions) {
+            const dx = pp.x - player.position.x;
+            const dz = pp.z - player.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist < WANTED.policeHeatRadius) {
+              wantedSystem.addHeat(1, 'crime_witnessed');
+              break;
+            }
           }
         }
       }
@@ -535,6 +678,9 @@ function gameLoop() {
     // Combat system update
     combatSystem.update(FIXED_DT, playerPos, pedSystem.getPedestrians());
 
+    // Mission system update
+    missionSystem.update(FIXED_DT, gameState, playerPos);
+
     // Check for wasted
     if (combatSystem.isWasted() && !gameState.wasted) {
       gameState.wasted = true;
@@ -562,7 +708,13 @@ function gameLoop() {
     // Interact prompt
     if (gameState.mode === 'onFoot') {
       const nearby = vehicleSystem.getClosest(player.position);
-      hud.showInteractPrompt(nearby ? 'Press E to enter' : '');
+      // Check if near mission accept marker
+      const activeMission = missionSystem.getActiveMission();
+      if (activeMission) {
+        hud.showInteractPrompt(activeMission.def.steps[activeMission.stepIndex]?.text || '');
+      } else {
+        hud.showInteractPrompt(nearby ? 'Press E to enter' : '');
+      }
     } else {
       hud.showInteractPrompt('Press E to exit');
     }
@@ -571,13 +723,29 @@ function gameLoop() {
     gameState.health = combatSystem.getPlayerHealthRaw();
     gameState.wanted = wantedSystem.getLevel();
     gameState.speed = gameState.currentVehicle ? Math.abs(gameState.currentVehicle.speed) : player.speed;
+
+    // Auto-save on mission complete
+    const missionState = missionSystem.getMissionState();
+    if (missionState && !missionState.active && missionState.completed.length > 0) {
+      saveSystem.save(gameState, player, wantedSystem, combatSystem, missionSystem);
+    }
   }
 
   // Render
   renderer.render(scene, camera);
 
+  // Update mission beacon
+  const markerPos = missionSystem.getActiveMarkerPos();
+  updateMissionBeacon(markerPos, dt);
+
   // HUD update
   hud.update(gameState, dt);
+
+  // Update objective line with mission step text
+  const ms = missionSystem.getMissionState();
+  if (ms && ms.active) {
+    hud.setObjective(ms.stepText);
+  }
 
   // Show BUSTED overlay
   const bustedOverlay = document.getElementById('busted-overlay');
@@ -617,12 +785,14 @@ function gameLoop() {
     ? { x: gameState.currentVehicle.position.x, z: gameState.currentVehicle.position.z, yaw: gameState.currentVehicle.yaw }
     : { x: player.position.x, z: player.position.z, yaw: player.yaw };
 
+  const missionMarkers = missionSystem.getMissionMarkerPositions();
   minimap.draw(mapPos, colliders,
     trafficSystem.getTrafficCars(),
     pedSystem.getPedestrians(),
     vehicleSystem.parkedCars,
     policeSystem.getPoliceCars(),
-    policeSystem.getOfficers()
+    policeSystem.getOfficers(),
+    missionMarkers
   );
 }
 
@@ -637,7 +807,10 @@ window.addEventListener('resize', () => {
 requestAnimationFrame(gameLoop);
 
 // ---- Debug handle ----
-window.__game = { gameState, player, scene, camera, renderer };
+window.__game = {
+  gameState, player, scene, camera, renderer,
+  missionSystem, saveSystem, wantedSystem, combatSystem,
+};
 
 // Mark ready
 requestAnimationFrame(() => {

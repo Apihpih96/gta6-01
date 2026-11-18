@@ -85,5 +85,16 @@ export function createWantedSystem() {
     state.wanted = wantedLevel;
   }
 
-  return { update, addHeat, getLevel, reset, isPoliceNearby: () => policeNearby };
+  /** Set the heat accumulator and wanted level directly (for save/load). */
+  function setHeatAccumulator(heat, level) {
+    heatAccumulator = Math.max(0, heat);
+    wantedLevel = Math.min(5, Math.max(0, level));
+    lastCrimeTime = heat > 0 || level > 0 ? performance.now() / 1000 : 0;
+  }
+
+  function getHeatAccumulator() {
+    return heatAccumulator;
+  }
+
+  return { update, addHeat, getLevel, reset, isPoliceNearby: () => policeNearby, setHeatAccumulator, getHeatAccumulator };
 }

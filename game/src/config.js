@@ -183,3 +183,23 @@ export const COMBAT = {
 
 /** Objective text */
 export const OBJECTIVE_DEFAULT = 'Explore the city';
+
+/** Mission system */
+export const MISSIONS = {
+  /** Radius (world units) for mission marker interaction */
+  acceptRadius: 4,
+  /** Radius for objective completion */
+  objectiveRadius: 5,
+  /** Pulsing beacon height above objective */
+  beaconHeight: 8,
+  /** Pulse speed (seconds per cycle) */
+  pulseSpeed: 1.5,
+};
+
+/** Save system */
+export const SAVE = {
+  /** Auto-save interval in seconds */
+  autoSaveInterval: 30,
+  /** localStorage key */
+  saveKey: 'solar-coast-save-v1',
+};

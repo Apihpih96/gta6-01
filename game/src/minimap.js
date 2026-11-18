@@ -25,7 +25,7 @@ export function createMinimap(container) {
   }
 
   /** Draw one frame of the minimap. */
-  function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars, policeCars, officers) {
+  function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars, policeCars, officers, missionMarkers) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Background (sand)
@@ -104,6 +104,24 @@ export function createMinimap(container) {
       for (const o of officers) {
         const [ox, oz] = worldToMap(o.position.x, o.position.z);
         ctx.fillRect(ox - 2, oz - 2, 4, 4);
+      }
+    }
+
+    // Mission markers (gold diamond)
+    if (missionMarkers && missionMarkers.length > 0) {
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.006);
+      for (const mm of missionMarkers) {
+        const [mx, mz] = worldToMap(mm.x, mm.z);
+        ctx.save();
+        ctx.translate(mx, mz);
+        ctx.rotate(Math.PI / 4);
+        const size = 5 + pulse * 2;
+        ctx.fillStyle = mm.type === 'accept' ? '#ffaa00' : '#ffdd00';
+        ctx.fillRect(-size / 2, -size / 2, size, size);
+        ctx.strokeStyle = '#aa6600';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-size / 2, -size / 2, size, size);
+        ctx.restore();
       }
     }
 
