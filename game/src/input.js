@@ -17,6 +17,12 @@ let mouseLeft = false;
 let wheelDelta = 0;
 let pointerLocked = false;
 let muted = false;
+let audioEngine = null;
+
+/** Set the audio engine reference for mute toggling. */
+export function setAudioEngine(engine) {
+  audioEngine = engine;
+}
 
 /** Bind DOM events to capture input. */
 export function bindInput(canvas) {
@@ -27,6 +33,7 @@ export function bindInput(canvas) {
     keys.add(e.code);
     if (e.code === 'KeyM') {
       muted = !muted;
+      if (audioEngine) audioEngine.setMuted(muted);
     }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();

@@ -153,6 +153,23 @@ html, body {
   white-space: nowrap;
 }
 
+/* Mute button */
+#mute-btn {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  font-size: 22px;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+  transition: transform 0.1s ease;
+}
+
+#mute-btn:hover {
+  transform: scale(1.15);
+}
+
 /* ---- Start screen — semi-transparent so the 3D city shows through ---- */
 #start-screen {
   position: fixed;

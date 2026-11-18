@@ -50,6 +50,7 @@ Then open `http://localhost:8080` in your browser.
 | Mouse | Look / Steer |
 | E | Enter/Exit vehicle |
 | F / Left click | Punch |
+| M | Mute/Unmute audio |
 | Esc | Pause |
 
 ## Build

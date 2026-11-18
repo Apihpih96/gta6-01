@@ -12,7 +12,7 @@ import { buildCity } from './city.js';
 import { createPlayer } from './player.js';
 import { createMinimap } from './minimap.js';
 import { createHUD } from './hud.js';
-import { bindInput, consumeMouse, getActions, consumeKey, isKeyDown } from './input.js';
+import { bindInput, consumeMouse, getActions, consumeKey, isKeyDown, setAudioEngine } from './input.js';
 import { parseShotParams, isShotScene, setupShotScene } from './shots.js';
 import { hashSeed } from './random.js';
 import { createVehicleSystem } from './vehicles.js';
@@ -24,6 +24,7 @@ import { createPoliceSystem, buildPoliceCarMesh } from './police.js';
 import { createCombatSystem } from './combat.js';
 import { createMissionSystem } from './missions.js';
 import { createSaveSystem } from './save.js';
+import { createAudioEngine } from './audio.js';
 
 // ---- Bootstrap ----
 const canvas = document.getElementById('game-canvas');
@@ -75,6 +76,9 @@ const policeSystem = createPoliceSystem(scene, seed, colliders, roadData, null);
 
 // ---- Save system ----
 const saveSystem = createSaveSystem(null);
+
+// ---- Audio system ----
+const audio = createAudioEngine();
 
 // ---- Game state ----
 const gameState = {
@@ -226,6 +230,9 @@ function updateMissionBeacon(markerPos, dt) {
 // ---- HUD ----
 const hud = createHUD();
 
+// Wire mute button
+hud.wireMuteButton(audio);
+
 // Check for existing save and enable continue button
 if (saveSystem.hasSave()) {
   hud.setContinueEnabled(true);
@@ -235,6 +242,7 @@ hud.showStartScreen(!gameState.running);
 
 hud.wireButtons({
   onStartGame() {
+    audio.init();
     saveSystem.clearSave();
     gameState.running = true;
     gameState.paused = false;
@@ -245,6 +253,7 @@ hud.wireButtons({
     canvas.requestPointerLock();
   },
   onContinue() {
+    audio.init();
     const loaded = saveSystem.load(gameState, player, wantedSystem, combatSystem, missionSystem);
     if (loaded) {
       gameState.running = true;
@@ -285,6 +294,7 @@ const minimapContainer = document.getElementById('minimap-container');
 const minimap = createMinimap(minimapContainer);
 
 // ---- Input ----
+setAudioEngine(audio);
 bindInput(canvas);
 
 // ---- Camera smoothing (for vehicle follow) ----
@@ -338,6 +348,8 @@ function enterVehicle(car) {
   playerMesh.visible = false;
   camInitialized = false;
   hud.showMessage('Press E to exit');
+  audio.play('carDoor');
+  audio.startEngine();
 
   // Crime: stealing a car
   wantedSystem.addHeat(1, 'stolen_vehicle');
@@ -382,6 +394,8 @@ function exitVehicle() {
   gameState.currentVehicle = null;
   camInitialized = false;
   hud.showMessage('On foot again');
+  audio.stopEngine();
+  audio.play('carDoor');
 }
 
 /** Respawn player at a location after bust or death. */
@@ -435,6 +449,7 @@ function gameLoop() {
     if (gameState.respawnTimer > 2) {
       const cashLost = policeSystem.handleBust(gameState);
       hud.showMessage('BUSTED! Lost $' + cashLost.toLocaleString());
+      audio.play('bustedSting');
       // Respawn at police station (downtown)
       respawnAt(new THREE.Vector3(20, 0, 20), 'Released from station');
       wantedSystem.reset();
@@ -451,6 +466,7 @@ function gameLoop() {
     if (gameState.respawnTimer > 2) {
       const cashLost = combatSystem.handleWasted(gameState);
       hud.showMessage('WASTED! Lost $' + cashLost.toLocaleString());
+      audio.play('wastedSting');
       // Respawn at hospital (edge of town)
       respawnAt(new THREE.Vector3(-30, 0, -30), 'Released from hospital');
       // Wanted unchanged
@@ -501,9 +517,11 @@ function gameLoop() {
 
     // Punch action
     if (actions.punch && gameState.mode === 'onFoot') {
+      audio.play('punch');
       const punchResult = combatSystem.tryPunch(player.position, player.yaw, pedSystem.getPedestrians());
       if (punchResult && punchResult.hit && punchResult.ped) {
         const events = combatSystem.handlePedHit(punchResult.ped, pedSystem.getPedestrians());
+        audio.play('pedYelp');
 
         // Check mission: M3 shakedown
         const pedPos = punchResult.ped.position;
@@ -590,6 +608,9 @@ function gameLoop() {
           } else {
             v.position.z = v.position.z < (col.minZ + col.maxZ) / 2 ? col.minZ - carR : col.maxZ + carR;
           }
+          if (Math.abs(v.speed) > 3) {
+            audio.play('crash');
+          }
           v.speed *= 0.5;
         }
       }
@@ -604,12 +625,12 @@ function gameLoop() {
           const push = (3.5 - dist) / 2;
           v.position.x += (dx / dist) * push;
           v.position.z += (dz / dist) * push;
-          v.speed *= 0.7;
-
-          // Crime: hitting a traffic car
           if (Math.abs(v.speed) > 5) {
+            audio.play('crash');
+            // Crime: hitting a traffic car
             wantedSystem.addHeat(0.5, 'hit_vehicle');
           }
+          v.speed *= 0.7;
         }
       }
 
@@ -620,6 +641,7 @@ function gameLoop() {
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist < 2.5 && Math.abs(v.speed) > 3) {
           // Hit!
+          audio.play('pedYelp');
           combatSystem.handlePlayerDamage(10);
           wantedSystem.addHeat(1, 'hit_pedestrian');
           // Push pedestrian away
@@ -638,6 +660,9 @@ function gameLoop() {
           fw.rotation.y = v.steerAngle;
         }
       }
+
+      // Engine hum follows speed
+      audio.updateEngine(Math.abs(v.speed) / VEHICLE.maxSpeed);
 
       // Camera
       updateDriveCamera(camera, v, mouse);
@@ -669,9 +694,11 @@ function gameLoop() {
     const wantedLevel = wantedSystem.getLevel();
     if (wantedLevel > 0) {
       policeSystem.spawnForWanted(wantedLevel, playerPos, gameState.currentVehicle);
+      audio.play('siren', { on: true });
     } else {
       // Despawn all police when wanted hits 0
       policeSystem.despawnAll();
+      audio.play('siren', { on: false });
     }
     policeSystem.update(FIXED_DT, playerPos, gameState.mode === 'driving', gameState);
 
@@ -679,7 +706,24 @@ function gameLoop() {
     combatSystem.update(FIXED_DT, playerPos, pedSystem.getPedestrians());
 
     // Mission system update
+    const prevMissionActive = missionSystem.getMissionState()?.active;
     missionSystem.update(FIXED_DT, gameState, playerPos);
+    const postMissionState = missionSystem.getMissionState();
+
+    // Detect mission completion or failure
+    if (prevMissionActive && (!postMissionState || !postMissionState.active)) {
+      // Check if it was a completion (completed list grew)
+      const ms = missionSystem.getMissionState();
+      if (ms && ms.completed.length > (audio._prevCompleted || 0)) {
+        audio.play('missionOk');
+        audio.play('cash');
+      } else {
+        audio.play('missionFail');
+      }
+      audio._prevCompleted = ms ? ms.completed.length : 0;
+    } else if (!prevMissionActive && postMissionState && postMissionState.active) {
+      audio._prevCompleted = postMissionState.completed.length;
+    }
 
     // Check for wasted
     if (combatSystem.isWasted() && !gameState.wasted) {
@@ -740,6 +784,7 @@ function gameLoop() {
 
   // HUD update
   hud.update(gameState, dt);
+  hud.setMuted(audio.isMuted());
 
   // Update objective line with mission step text
   const ms = missionSystem.getMissionState();

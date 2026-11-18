@@ -26,6 +26,7 @@ export function createHUD() {
   const missionBannerEl = document.getElementById('mission-banner');
   const briefingPanel = document.getElementById('briefing-panel');
   const missionSelectEl = document.getElementById('mission-select');
+  const muteBtnEl = document.getElementById('mute-btn');
 
   let messageTimer = 0;
   let objective = OBJECTIVE_DEFAULT;
@@ -245,6 +246,21 @@ export function createHUD() {
     }
   }
 
+  /** Update the mute button icon and wire its click handler. */
+  function wireMuteButton(audioEngine) {
+    if (!muteBtnEl) return;
+    muteBtnEl.addEventListener('click', () => {
+      audioEngine.setMuted(!audioEngine.isMuted());
+    });
+  }
+
+  /** Update the mute button icon to reflect current mute state. */
+  function setMuted(muted) {
+    if (muteBtnEl) {
+      muteBtnEl.textContent = muted ? '🔇' : '🔊';
+    }
+  }
+
   return {
     update,
     showMessage,
@@ -259,5 +275,7 @@ export function createHUD() {
     updateMissionSelect,
     showMissionSelect,
     setContinueEnabled,
+    wireMuteButton,
+    setMuted,
   };
 }
