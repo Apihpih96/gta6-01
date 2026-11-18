@@ -25,7 +25,7 @@ export function createMinimap(container) {
   }
 
   /** Draw one frame of the minimap. */
-  function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars) {
+  function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars, policeCars, officers) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Background (sand)
@@ -82,6 +82,28 @@ export function createMinimap(container) {
       for (const p of pedestrians) {
         const [px, pz] = worldToMap(p.position.x, p.position.z);
         ctx.fillRect(px - 1, pz - 1, 2, 2);
+      }
+    }
+
+    // Police cars (blue flashing dots)
+    if (policeCars && policeCars.length > 0) {
+      const flash = Math.sin(performance.now() * 0.008) > 0;
+      ctx.fillStyle = flash ? '#4488ff' : '#2244aa';
+      for (const pc of policeCars) {
+        const [cx, cz] = worldToMap(pc.position.x, pc.position.z);
+        ctx.beginPath();
+        ctx.arc(cx, cz, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Officers on foot (small blue squares)
+    if (officers && officers.length > 0) {
+      const flash = Math.sin(performance.now() * 0.008) > 0;
+      ctx.fillStyle = flash ? '#4488ff' : '#2244aa';
+      for (const o of officers) {
+        const [ox, oz] = worldToMap(o.position.x, o.position.z);
+        ctx.fillRect(ox - 2, oz - 2, 4, 4);
       }
     }
 

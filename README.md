@@ -13,8 +13,11 @@
 - **Drivable vehicles** — 4 body styles (sedan, hatchback, pickup, van), arcade physics with handbrake
 - **Traffic AI** — cars driving the road grid, keeping gaps, spawning and despawning
 - **Pedestrians** — walkers on sidewalks that flee from fast-moving vehicles
-- **Top-down minimap** — roads, buildings, parked cars, traffic, pedestrians, and player arrow
-- **HUD** — health bar, cash, wanted stars (reserved), speed readout, contextual prompts
+- **Wanted level** — 0–5 stars that rise from crimes (stealing cars, hitting peds, punching) and decay when you lay low
+- **Police pursuit** — black-and-white patrol cars with flashing light bars, on-foot officers at 3+ stars, ramming and bust logic
+- **Combat** — punch with F or left-click, pedestrian health and flee response, some fight back, player health regen
+- **Top-down minimap** — roads, buildings, parked cars, traffic, pedestrians, police blips, and player arrow
+- **HUD** — health bar, cash, wanted stars, speed readout, contextual prompts, BUSTED/WASTED overlays
 
 ## Run it
 
@@ -33,6 +36,7 @@ Then open `http://localhost:8080` in your browser.
 | Space | Jump / Handbrake |
 | Mouse | Look / Steer |
 | E | Enter/Exit vehicle |
+| F / Left click | Punch |
 | Esc | Pause |
 
 ## Build

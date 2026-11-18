@@ -137,10 +137,48 @@ export const VEHICLE_COLORS = [
   0x8833aa, // purple
 ];
 
-/** Wanted system timings (reserved for later sessions) */
+/** Wanted system timings */
 export const WANTED = {
-  starDecayTime: 15,
-  policeSpawnDelay: 5,
+  /** Seconds without crime before a wanted star decays */
+  starDecayTime: 25,
+  /** Police proximity radius for decay block (m) */
+  policeDecayRadius: 60,
+  /** Police proximity radius for extra heat (m) */
+  policeHeatRadius: 40,
+};
+
+/** Police system constants */
+export const POLICE = {
+  /** Speed of police cars in pursuit (m/s) */
+  carSpeed: 18,
+  /** Speed of on-foot officers (m/s) */
+  officerSpeed: 5,
+  /** Distance for bust trigger when on foot (m) */
+  bustDistance: 3,
+  /** Seconds police must be within bustDistance to trigger bust */
+  bustHoldTime: 2,
+  /** Minimap blip radius */
+  minimapBlipRadius: 3,
+};
+
+/** Combat system constants */
+export const COMBAT = {
+  /** Punch range (m) */
+  punchRange: 2.2,
+  /** Punch cooldown (s) */
+  punchCooldown: 0.45,
+  /** Punch lunge animation duration (s) */
+  punchLungeTime: 0.2,
+  /** Pedestrian health (punches to KO) */
+  pedHealth: 3,
+  /** Damage from fighting pedestrian per hit */
+  pedDamage: 5,
+  /** Fighting back probability (1 in N) */
+  fightBackChance: 5,
+  /** Health regeneration rate (per second) */
+  regenRate: 2,
+  /** Seconds without damage before regen starts */
+  regenDelay: 8,
 };
 
 /** Objective text */

@@ -1,7 +1,7 @@
 /**
  * Bootstrap: renderer, scene, camera, clock, game state, game loop
  * with fixed-step updates, city + player + HUD + minimap + shots wiring.
- * Now includes vehicles, traffic AI and pedestrians.
+ * Now includes vehicles, traffic AI, pedestrians, wanted level, police, and combat.
  *
  * Exposes window.__game for debugging.
  */
@@ -17,7 +17,10 @@ import { hashSeed } from './random.js';
 import { createVehicleSystem } from './vehicles.js';
 import { createTrafficSystem } from './traffic.js';
 import { createPedestrianSystem } from './pedestrians.js';
-import { VEHICLE, CAMERA } from './config.js';
+import { VEHICLE, CAMERA, WANTED } from './config.js';
+import { createWantedSystem } from './wanted.js';
+import { createPoliceSystem, buildPoliceCarMesh } from './police.js';
+import { createCombatSystem } from './combat.js';
 
 // ---- Bootstrap ----
 const canvas = document.getElementById('game-canvas');
@@ -55,17 +58,30 @@ const trafficSystem = createTrafficSystem(scene, seed, roadData, colliders);
 // ---- Pedestrian system ----
 const pedSystem = createPedestrianSystem(scene, seed, colliders, roadData);
 
+// ---- Wanted system ----
+const wantedSystem = createWantedSystem();
+
+// ---- Combat system ----
+const combatSystem = createCombatSystem(scene, colliders, null, wantedSystem);
+
+// ---- Police system ----
+const policeSystem = createPoliceSystem(scene, seed, colliders, roadData, null);
+
 // ---- Game state ----
 const gameState = {
   running: isShotScene(shotScene),
   paused: false,
   mode: 'onFoot', // 'onFoot' | 'driving'
   health: player.health,
-  cash: player.cash,
+  cash: 5000,
   wanted: player.wanted,
   speed: 0,
   hasWeapon: false,
   currentVehicle: null,
+  busted: false,
+  wasted: false,
+  respawnTimer: 0,
+  respawnPos: null,
 };
 
 // ---- Setup shot scene ----
@@ -84,6 +100,44 @@ if (isShotScene(shotScene)) {
     gameState.mode = 'driving';
     gameState.currentVehicle = startCar;
     playerMesh.visible = false;
+  }
+
+  // For "chase" scene, create a player vehicle + police pursuit
+  if (shotScene === 'chase') {
+    const startCar = vehicleSystem.createCar(
+      new THREE.Vector3(0, 0.6, 0),
+      0,
+      0xcc2222
+    );
+    startCar.isPlayer = true;
+    startCar.speed = 15;
+    gameState.mode = 'driving';
+    gameState.currentVehicle = startCar;
+    playerMesh.visible = false;
+
+    // Set wanted level to 3 via the wanted system (not just gameState)
+    wantedSystem.addHeat(3, 'chase_scene');
+    gameState.wanted = wantedSystem.getLevel();
+
+    // Spawn two police cars behind with proper police meshes
+    for (let i = 0; i < 2; i++) {
+      const policeMesh = buildPoliceCarMesh();
+      const pz = 10 + i * 10;
+      const px = (i === 0 ? -3 : 3);
+      policeMesh.position.set(px, 0.6, pz);
+      policeMesh.rotation.y = 0;
+      scene.add(policeMesh);
+
+      policeSystem.getPoliceCars().push({
+        mesh: policeMesh,
+        position: new THREE.Vector3(px, 0.6, pz),
+        yaw: 0,
+        speed: 16 + i * 2,
+        targetYaw: 0,
+        state: 'pursue',
+        ramCooldown: 0,
+      });
+    }
   }
 }
 
@@ -171,6 +225,9 @@ function enterVehicle(car) {
   playerMesh.visible = false;
   camInitialized = false;
   hud.showMessage('Press E to exit');
+
+  // Crime: stealing a car
+  wantedSystem.addHeat(1, 'stolen_vehicle');
 }
 
 /** Exit the current vehicle. */
@@ -211,10 +268,28 @@ function exitVehicle() {
   hud.showMessage('On foot again');
 }
 
+/** Respawn player at a location after bust or death. */
+function respawnAt(position, message) {
+  player.position.copy(position);
+  playerMesh.position.copy(position);
+  playerMesh.visible = true;
+  gameState.mode = 'onFoot';
+  gameState.currentVehicle = null;
+  if (gameState.currentVehicle) {
+    scene.remove(gameState.currentVehicle.mesh);
+    const idx = vehicleSystem.vehicles.indexOf(gameState.currentVehicle);
+    if (idx >= 0) vehicleSystem.vehicles.splice(idx, 1);
+    gameState.currentVehicle = null;
+  }
+  camInitialized = false;
+  hud.showMessage(message);
+}
+
 // ---- Fixed-step game loop ----
 const FIXED_DT = 1 / 60;
 let accumulator = 0;
 const clock = new THREE.Clock();
+let playerPos = new THREE.Vector3(); // Track for HUD/minimap outside the update loop
 
 function gameLoop() {
   requestAnimationFrame(gameLoop);
@@ -227,8 +302,43 @@ function gameLoop() {
     return;
   }
 
+  // Handle busted state
+  if (gameState.busted) {
+    gameState.respawnTimer += dt;
+    if (gameState.respawnTimer > 2) {
+      const cashLost = policeSystem.handleBust(gameState);
+      hud.showMessage('BUSTED! Lost $' + cashLost.toLocaleString());
+      // Respawn at police station (downtown)
+      respawnAt(new THREE.Vector3(20, 0, 20), 'Released from station');
+      wantedSystem.reset();
+      policeSystem.despawnAll();
+      gameState.busted = false;
+      gameState.respawnTimer = 0;
+      gameState.respawnPos = null;
+    }
+  }
+
+  // Handle wasted state
+  if (gameState.wasted) {
+    gameState.respawnTimer += dt;
+    if (gameState.respawnTimer > 2) {
+      const cashLost = combatSystem.handleWasted(gameState);
+      hud.showMessage('WASTED! Lost $' + cashLost.toLocaleString());
+      // Respawn at hospital (edge of town)
+      respawnAt(new THREE.Vector3(-30, 0, -30), 'Released from hospital');
+      // Wanted unchanged
+      gameState.wasted = false;
+      gameState.respawnTimer = 0;
+    }
+  }
+
   while (accumulator >= FIXED_DT) {
     accumulator -= FIXED_DT;
+
+    // Skip updates during bust/wasted overlay
+    if (gameState.busted || gameState.wasted) {
+      continue;
+    }
 
     const actions = getActions();
 
@@ -255,10 +365,41 @@ function gameLoop() {
       }
     }
 
-    // Update systems
+    // Punch action
+    if (actions.punch && gameState.mode === 'onFoot') {
+      const punchResult = combatSystem.tryPunch(player.position, player.yaw, pedSystem.getPedestrians());
+      if (punchResult && punchResult.hit && punchResult.ped) {
+        const events = combatSystem.handlePedHit(punchResult.ped, pedSystem.getPedestrians());
+
+        // Crime: punching a pedestrian
+        wantedSystem.addHeat(1, 'assault');
+
+        // Check if police nearby for extra heat
+        const policePositions = policeSystem.getPolicePositions();
+        for (const pp of policePositions) {
+          const dx = pp.x - player.position.x;
+          const dz = pp.z - player.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < WANTED.policeHeatRadius) {
+            wantedSystem.addHeat(1, 'crime_witnessed');
+            break;
+          }
+        }
+      }
+    }
+
+    // Update player
     if (gameState.mode === 'onFoot') {
       updatePlayer(actions, FIXED_DT);
       updatePlayerCamera(camera, actions, mouse);
+
+      // Sync health from combat system
+      player.health = combatSystem.getPlayerHealthRaw();
+    }
+
+    // Update systems
+    if (gameState.mode === 'onFoot') {
+      // Player already updated above
     } else if (gameState.mode === 'driving' && gameState.currentVehicle) {
       const v = gameState.currentVehicle;
       // Drive physics
@@ -321,6 +462,28 @@ function gameLoop() {
           v.position.x += (dx / dist) * push;
           v.position.z += (dz / dist) * push;
           v.speed *= 0.7;
+
+          // Crime: hitting a traffic car
+          if (Math.abs(v.speed) > 5) {
+            wantedSystem.addHeat(0.5, 'hit_vehicle');
+          }
+        }
+      }
+
+      // Hit pedestrians with car
+      for (const ped of pedSystem.getPedestrians()) {
+        const dx = ped.position.x - v.position.x;
+        const dz = ped.position.z - v.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 2.5 && Math.abs(v.speed) > 3) {
+          // Hit!
+          combatSystem.handlePlayerDamage(10);
+          wantedSystem.addHeat(1, 'hit_pedestrian');
+          // Push pedestrian away
+          ped.position.x += (dx / dist) * 3;
+          ped.position.z += (dz / dist) * 3;
+          ped.state = 'flee';
+          ped.timer = 5;
         }
       }
 
@@ -342,7 +505,7 @@ function gameLoop() {
     }
 
     // Traffic
-    const playerPos = gameState.mode === 'driving' && gameState.currentVehicle
+    playerPos = gameState.mode === 'driving' && gameState.currentVehicle
       ? gameState.currentVehicle.position
       : player.position;
     trafficSystem.update(FIXED_DT, playerPos);
@@ -355,6 +518,47 @@ function gameLoop() {
     // Vehicle system update (for parked cars)
     vehicleSystem.update(FIXED_DT, actions, player, gameState);
 
+    // Wanted system update
+    const policePositions = policeSystem.getPolicePositions();
+    wantedSystem.update(FIXED_DT, player, { policePositions });
+
+    // Police system update
+    const wantedLevel = wantedSystem.getLevel();
+    if (wantedLevel > 0) {
+      policeSystem.spawnForWanted(wantedLevel, playerPos, gameState.currentVehicle);
+    } else {
+      // Despawn all police when wanted hits 0
+      policeSystem.despawnAll();
+    }
+    policeSystem.update(FIXED_DT, playerPos, gameState.mode === 'driving', gameState);
+
+    // Combat system update
+    combatSystem.update(FIXED_DT, playerPos, pedSystem.getPedestrians());
+
+    // Check for wasted
+    if (combatSystem.isWasted() && !gameState.wasted) {
+      gameState.wasted = true;
+      gameState.respawnTimer = 0;
+    }
+
+    // Check for busted (from police system)
+    if (policeSystem.isBustTriggered() && !gameState.busted && !gameState.wasted) {
+      gameState.busted = true;
+      gameState.respawnTimer = 0;
+    }
+
+    // Police damage to player (ramming)
+    if (gameState.mode === 'onFoot') {
+      for (const pc of policeSystem.getPoliceCars()) {
+        const dx = pc.position.x - player.position.x;
+        const dz = pc.position.z - player.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < 2.5 && Math.abs(pc.speed) > 3) {
+          combatSystem.handlePlayerDamage(8);
+        }
+      }
+    }
+
     // Interact prompt
     if (gameState.mode === 'onFoot') {
       const nearby = vehicleSystem.getClosest(player.position);
@@ -364,9 +568,8 @@ function gameLoop() {
     }
 
     // Sync HUD
-    gameState.health = player.health;
-    gameState.cash = player.cash;
-    gameState.wanted = player.wanted;
+    gameState.health = combatSystem.getPlayerHealthRaw();
+    gameState.wanted = wantedSystem.getLevel();
     gameState.speed = gameState.currentVehicle ? Math.abs(gameState.currentVehicle.speed) : player.speed;
   }
 
@@ -376,6 +579,39 @@ function gameLoop() {
   // HUD update
   hud.update(gameState, dt);
 
+  // Show BUSTED overlay
+  const bustedOverlay = document.getElementById('busted-overlay');
+  if (bustedOverlay) {
+    bustedOverlay.style.display = gameState.busted ? 'flex' : 'none';
+  }
+
+  // Show WASTED overlay
+  const wastedOverlay = document.getElementById('wasted-overlay');
+  if (wastedOverlay) {
+    wastedOverlay.style.display = gameState.wasted ? 'flex' : 'none';
+  }
+
+  // Police nearby indicator
+  const policeNearbyEl = document.getElementById('police-nearby');
+  if (policeNearbyEl) {
+    const policePositions = policeSystem.getPolicePositions();
+    let nearPolice = false;
+    for (const pp of policePositions) {
+      const dx = pp.x - playerPos.x;
+      const dz = pp.z - playerPos.z;
+      if (Math.sqrt(dx * dx + dz * dz) < 50) {
+        nearPolice = true;
+        break;
+      }
+    }
+    if (nearPolice && wantedSystem.getLevel() > 0) {
+      policeNearbyEl.textContent = '⚠ POLICE NEARBY';
+      policeNearbyEl.style.opacity = '1';
+    } else {
+      policeNearbyEl.style.opacity = '0';
+    }
+  }
+
   // Minimap
   const mapPos = gameState.mode === 'driving' && gameState.currentVehicle
     ? { x: gameState.currentVehicle.position.x, z: gameState.currentVehicle.position.z, yaw: gameState.currentVehicle.yaw }
@@ -384,7 +620,9 @@ function gameLoop() {
   minimap.draw(mapPos, colliders,
     trafficSystem.getTrafficCars(),
     pedSystem.getPedestrians(),
-    vehicleSystem.parkedCars
+    vehicleSystem.parkedCars,
+    policeSystem.getPoliceCars(),
+    policeSystem.getOfficers()
   );
 }
 

@@ -18,7 +18,7 @@ export function parseShotParams() {
 
 /** Check if we are in a shot scene (auto-start, no title screen blocking). */
 export function isShotScene(scene) {
-  return scene === 'start' || scene === 'roam' || scene === 'drive';
+  return scene === 'start' || scene === 'roam' || scene === 'drive' || scene === 'chase';
 }
 
 /** Apply shot-specific camera and player positioning. */
@@ -57,5 +57,15 @@ export function setupShotScene(scene, seed, playerState, camera) {
       playerState.position.z + 12
     );
     camera.lookAt(playerState.position.x, playerState.position.y + 1.5, playerState.position.z - 20);
+  } else if (scene === 'chase') {
+    // Player in a car at wanted 3 with two police cars in pursuit
+    playerState.position.set(0, 0, 0);
+    playerState.yaw = 0;
+    playerState.pitch = 0.1;
+    playerState.cameraDistance = 12;
+
+    // Side-rear angle to show both player car and pursuing police
+    camera.position.set(12, 7, 18);
+    camera.lookAt(0, 1.5, -5);
   }
 }

@@ -285,3 +285,56 @@ html, body {
 #pause-content button:hover {
   transform: scale(1.05);
 }
+
+/* ---- BUSTED overlay ---- */
+#busted-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 40, 0.85);
+  z-index: 300;
+}
+
+#busted-overlay .overlay-text {
+  color: #4488ff;
+  font-size: 72px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  text-shadow: 0 0 20px rgba(68, 136, 255, 0.6), 4px 4px 8px rgba(0,0,0,0.8);
+}
+
+/* ---- WASTED overlay ---- */
+#wasted-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 0, 0, 0.85);
+  z-index: 300;
+}
+
+#wasted-overlay .overlay-text {
+  color: #cc2222;
+  font-size: 72px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  text-shadow: 0 0 20px rgba(204, 34, 34, 0.6), 4px 4px 8px rgba(0,0,0,0.8);
+}
+
+/* ---- Police nearby indicator ---- */
+#police-nearby {
+  position: absolute;
+  top: 110px;
+  right: 20px;
+  color: #4488ff;
+  font-size: 13px;
+  font-weight: bold;
+  text-shadow: 0 0 8px rgba(68, 136, 255, 0.6);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  text-align: right;
+  white-space: nowrap;
+}

@@ -55,7 +55,13 @@ export function bindInput(canvas) {
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0) mouseLeft = true;
+    if (e.button === 0) {
+      // Only register punch if pointer is already locked
+      // (first click requests pointer lock, not a punch)
+      if (pointerLocked) {
+        mouseLeft = true;
+      }
+    }
   });
   canvas.addEventListener('mouseup', (e) => {
     if (e.button === 0) mouseLeft = false;
@@ -103,7 +109,7 @@ export function getActions() {
     jump: consumeKey('Space'),
     handbrake: isKeyDown('Space'),
     interact: consumeKey('KeyE'),
-    punch: consumeKey('KeyF'),
+    punch: consumeKey('KeyF') || mouseLeft,
     pause: consumeKey('Escape'),
     confirm: consumeKey('Enter') || consumeKey('NumpadEnter'),
     shoot: mouseLeft,
