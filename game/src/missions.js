@@ -310,14 +310,7 @@ export function createMissionSystem(hud, wantedSystem, combatSystem) {
 
     if (dist < 8) { // generous radius — any punch near the marker counts
       sk.collected = true;
-
-      // If this was the last shopkeeper, advance to "return to Rico"
-      const allCollected = m3Shopkeepers.every(s => s.collected);
-      if (allCollected) {
-        advanceStep();
-      } else {
-        advanceStep();
-      }
+      advanceStep();
       return true;
     }
     return false;

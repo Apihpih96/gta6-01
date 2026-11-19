@@ -768,10 +768,14 @@ function gameLoop() {
     gameState.wanted = wantedSystem.getLevel();
     gameState.speed = gameState.currentVehicle ? Math.abs(gameState.currentVehicle.speed) : player.speed;
 
-    // Auto-save on mission complete
+    // Auto-save on mission complete (only when count increases)
     const missionState = missionSystem.getMissionState();
     if (missionState && !missionState.active && missionState.completed.length > 0) {
-      saveSystem.save(gameState, player, wantedSystem, combatSystem, missionSystem);
+      const prevCount = gameState._lastSavedMissionCount || 0;
+      if (missionState.completed.length > prevCount) {
+        saveSystem.save(gameState, player, wantedSystem, combatSystem, missionSystem);
+        gameState._lastSavedMissionCount = missionState.completed.length;
+      }
     }
   }
 
