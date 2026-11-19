@@ -131,6 +131,7 @@ export function getActions() {
     pause: consumeKey('Escape'),
     confirm: consumeKey('Enter') || consumeKey('NumpadEnter'),
     shoot: mouseLeft,
+    radio: consumeKey('KeyR'),
     muted,
   };
 }

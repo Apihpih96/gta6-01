@@ -25,6 +25,9 @@ import { createCombatSystem } from './combat.js';
 import { createMissionSystem } from './missions.js';
 import { createSaveSystem } from './save.js';
 import { createAudioEngine } from './audio.js';
+import { createWeatherSystem } from './weather.js';
+import { createTaxiSystem } from './taxi.js';
+import { createRadioSystem } from './radio.js';
 
 /* ------------------------------------------------------------------ */
 /*  Renderer + scene + camera                                         */
@@ -248,6 +251,11 @@ function refreshBeacon(position) {
 const hud = createHUD();
 hud.wireMuteButton(audio);
 
+// ── Day/night, taxi, radio (after runtime + hud exist) ─────────────
+const weather = createWeatherSystem(worldScene, worldSeed);
+const taxi = createTaxiSystem(worldScene, runtime, vehicles, hud, audio);
+const radio = createRadioSystem(audio);
+
 if (persistence.hasSave()) {
   hud.setContinueEnabled(true);
 }
@@ -410,6 +418,7 @@ function getOutOfVehicle() {
   hud.showMessage('On foot again');
   audio.stopEngine();
   audio.play('carDoor');
+  radio.stop();
 }
 
 /* ------------------------------------------------------------------ */
@@ -707,6 +716,12 @@ function tick() {
 
     const missionWasActive = missions.getMissionState()?.active;
     missions.update(FIXED_DT, runtime, trackerPos);
+
+    // ── New feature updates ───────────────────────────────────────
+    weather.update(FIXED_DT, trackerPos, hud);
+    taxi.update(FIXED_DT, actions);
+    radio.update(FIXED_DT, actions, runtime.travelMode, hud);
+
     const missionNow = missions.getMissionState();
 
     // Detect mission completion / failure for audio cues
