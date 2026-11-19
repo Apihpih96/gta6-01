@@ -60,8 +60,8 @@ export function createCombatSystem(scene, colliders, hud, wantedSystem) {
   function handlePedHit(ped, pedestrians) {
     const events = [];
 
-    // Guard against already-removed pedestrians
-    if (!ped || !ped.mesh) return events;
+    // Guard against already-removed pedestrians or double-hits on KO'd peds
+    if (!ped || !ped.mesh || ped.health === undefined || ped.health <= 0) return events;
 
     if (!ped.health) ped.health = 3; // 3 punches to KO
     ped.health--;

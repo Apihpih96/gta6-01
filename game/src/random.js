@@ -29,6 +29,7 @@ export function createRNG(seed) {
 
 /** Pick a random integer in [min, max] inclusive. */
 export function randInt(rng, min, max) {
+  if (max < min) { const tmp = min; min = max; max = tmp; }
   return Math.floor(rng() * (max - min + 1)) + min;
 }
 

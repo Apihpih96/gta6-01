@@ -27,15 +27,16 @@ export function setAudioEngine(engine) {
 /** Bind DOM events to capture input. */
 export function bindInput(canvas) {
   window.addEventListener('keydown', (e) => {
-    // Ignore game input when the user is typing in a text field
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' ||
-        e.target.isContentEditable) return;
+    // Ignore game input when the user is typing in a text field or content-editable region
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
 
-    // Ignore input when start/pause overlay is visible (buttons should capture clicks)
+    // Ignore input when an overlay is capturing attention (buttons handle their own clicks)
     const startScreen = document.getElementById('start-screen');
     const pauseScreen = document.getElementById('pause-screen');
-    if (startScreen && startScreen.style.display !== 'none' && startScreen.style.display !== '') return;
-    if (pauseScreen && pauseScreen.style.display !== 'none' && pauseScreen.style.display !== '') return;
+    const startVisible = startScreen && startScreen.style.display !== 'none' && startScreen.style.display !== '';
+    const pauseVisible = pauseScreen && pauseScreen.style.display !== 'none' && pauseScreen.style.display !== '';
+    if (startVisible || pauseVisible) return;
 
     if (!keys.has(e.code)) {
       justPressed.add(e.code);

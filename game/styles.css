@@ -9,6 +9,12 @@ html, body {
   font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
 }
 
+/* Keyboard focus outline for accessible button navigation */
+button:focus-visible {
+  outline: 3px solid #ffdd00;
+  outline-offset: 2px;
+}
+
 #game-canvas {
   position: fixed;
   inset: 0;

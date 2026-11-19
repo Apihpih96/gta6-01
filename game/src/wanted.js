@@ -17,7 +17,7 @@ export function createWantedSystem() {
 
   /** Add heat toward the next wanted star. Each full point = +1 star. */
   function addHeat(amount, reason) {
-    heatAccumulator += amount;
+    heatAccumulator += Math.max(0, amount);
     lastCrimeTime = performance.now() / 1000;
     decayTimer = 0;
 

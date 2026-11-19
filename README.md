@@ -40,6 +40,20 @@ node serve.ts
 
 Then open `http://localhost:8080` in your browser.
 
+## Screenshots
+
+Capture staged scenes by appending `?shot=<name>` to the URL:
+
+| Parameter | Scene |
+|-----------|-------|
+| `?shot=start` | Title screen overlooking the city |
+| `?shot=roam` | Player on a busy street corner |
+| `?shot=drive` | Driving down a main street |
+| `?shot=chase` | Police pursuit at 3-star wanted |
+| `?shot=mission` | On foot at a mission objective |
+
+Add `&seed=<number>` for deterministic screenshots.
+
 ## Controls
 
 | Key | Action |

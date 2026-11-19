@@ -178,6 +178,10 @@ export function createPedestrianSystem(scene, seed, colliders, roadData) {
       p.position.x = Math.max(-bound, Math.min(bound, p.position.x));
       p.position.z = Math.max(-bound, Math.min(bound, p.position.z));
 
+      // Clamp NaN positions that can arise from invalid movement vectors
+      if (Number.isNaN(p.position.x)) p.position.x = 0;
+      if (Number.isNaN(p.position.z)) p.position.z = 0;
+
       // Update mesh
       p.mesh.position.copy(p.position);
       p.mesh.rotation.y = p.yaw;

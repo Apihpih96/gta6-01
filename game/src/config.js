@@ -1,7 +1,9 @@
-/**
- * Tuning constants for Solar Coast — speeds, city size, palette, wanted timings.
+/** Tuning constants for Solar Coast — speeds, city size, palette, wanted timings.
  * All values are engine units (1 unit ≈ 1 metre). Adjust in one place, affects all systems.
  */
+
+/** Starting cash for a new game */
+export const START_CASH = 500;
 
 /** City grid parameters */
 export const CITY = {

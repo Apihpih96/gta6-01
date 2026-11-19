@@ -172,6 +172,21 @@ export function createPoliceSystem(scene, seed, colliders, roadData, hud) {
     bustTimer = 0;
   }
 
+  /** Return true when a bust is pending and has not yet been consumed. */
+  function isBustTriggered() {
+    return bustTriggered;
+  }
+
+  /** Process bust: lose cash, reset wanted, respawn at station. */
+  function handleBust(gameState) {
+    const cashLoss = Math.floor(gameState.cash * 0.1);
+    gameState.cash = Math.max(0, gameState.cash - cashLoss);
+    gameState.busted = false;
+    bustTriggered = false;
+    bustTimer = 0;
+    return cashLoss;
+  }
+
   /** Update police AI: pursue, ram, chase. */
   function update(dt, playerPos, playerInVehicle, gameState) {
     const flashPhase = performance.now() / 1000;
@@ -348,11 +363,6 @@ export function createPoliceSystem(scene, seed, colliders, roadData, hud) {
     bustTriggered = false;
     bustTimer = 0;
     return cashLoss;
-  }
-
-  /** Check if bust is triggered. */
-  function isBustTriggered() {
-    return bustTriggered;
   }
 
   return {

@@ -16,9 +16,10 @@ import { hashSeed } from './random.js';
 /** Parse shot params from URL. Returns { scene: string|null, seed: number }. */
 export function parseShotParams() {
   const params = new URLSearchParams(window.location.search);
-  const scene = params.get('shot');
-  const seed = parseInt(params.get('seed') || '1', 10);
-  return { scene: scene || null, seed: isNaN(seed) ? 1 : seed };
+  const rawScene = params.get('shot');
+  const rawSeed = params.get('seed');
+  const seed = rawSeed !== null ? parseInt(rawSeed, 10) : 1;
+  return { scene: rawScene || null, seed: isNaN(seed) ? 1 : seed };
 }
 
 /** Check if we are in a shot scene (auto-start, no title screen blocking). */

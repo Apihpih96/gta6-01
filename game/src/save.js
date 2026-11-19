@@ -51,6 +51,49 @@ export function createSaveSystem(hud) {
     };
   }
 
+  /** Apply a loaded save object to the live game state. Returns true on success. */
+  function applySaveData(data, gameState, player, wantedSystem, combatSystem, missionSystem) {
+    player.position.set(data.player.x, data.player.y, data.player.z);
+    player.yaw = data.player.yaw || 0;
+    gameState.cash = data.cash || 0;
+    gameState.health = data.player.health || 100;
+
+    if (wantedSystem) {
+      wantedSystem.reset();
+      if (data.wantedLevel > 0 && wantedSystem.setHeatAccumulator) {
+        wantedSystem.setHeatAccumulator(data.heatAccumulator || 0, data.wantedLevel);
+      }
+    }
+
+    if (combatSystem && combatSystem.setPlayerHealthRaw) {
+      combatSystem.setPlayerHealthRaw(data.player.health || 100);
+    }
+
+    if (missionSystem) {
+      missionSystem.setCompletedMissions(data.missions.completed || []);
+      missionSystem.addEarnings(data.totalEarnings || 0);
+
+      if (data.missions.activeMissionId) {
+        const def = missionSystem.getDefById(data.missions.activeMissionId);
+        if (def && !missionSystem.isMissionComplete(data.missions.activeMissionId)) {
+          missionSystem.acceptMission(
+            missionSystem.getAllMissionDefs().indexOf(def)
+          );
+          if (data.missions.activeStepIndex > 0) {
+            missionSystem.setCurrentMissionStep(
+              data.missions.activeMissionId,
+              data.missions.activeStepIndex
+            );
+            const obj = def.objectives[data.missions.activeStepIndex];
+            if (obj && hud) {
+              hud.setObjective(obj.text);
+            }
+          }
+        }
+      }
+    }
+  }
+
   /** Save the current game state to localStorage. */
   function save(gameState, player, wantedSystem, combatSystem, missionSystem) {
     try {
@@ -71,74 +114,18 @@ export function createSaveSystem(hud) {
       const json = localStorage.getItem(SAVE_KEY);
       if (!json) return null;
 
-      // Validate JSON structure before applying
       let data;
       try {
         data = JSON.parse(json);
       } catch {
-        // Corrupt JSON — clear and start fresh
         clearSave();
         return null;
       }
-      if (!data || data.version !== 1) return null; // corrupt or wrong version
+      if (!data || data.version !== 1) return null;
 
-      // Apply player state
-      player.position.set(data.player.x, data.player.y, data.player.z);
-      player.yaw = data.player.yaw || 0;
-
-      // Apply game state
-      gameState.cash = data.cash || 0;
-      gameState.health = data.player.health || 100;
-
-      // Apply wanted level
-      if (wantedSystem) {
-        wantedSystem.reset();
-        if (data.wantedLevel > 0) {
-          // Set heat accumulator directly if available
-          if (wantedSystem.setHeatAccumulator) {
-            wantedSystem.setHeatAccumulator(data.heatAccumulator || 0, data.wantedLevel);
-          } else {
-            for (let i = 0; i < data.wantedLevel; i++) {
-              wantedSystem.addHeat(1, 'save_restore');
-            }
-          }
-        }
-      }
-
-      // Apply health
-      if (combatSystem && combatSystem.setPlayerHealthRaw) {
-        combatSystem.setPlayerHealthRaw(data.player.health || 100);
-      }
-
-      // Apply missions
-      if (missionSystem) {
-        missionSystem.setCompletedMissions(data.missions.completed || []);
-        missionSystem.addEarnings(data.totalEarnings || 0);
-
-        if (data.missions.activeMissionId) {
-          const def = missionSystem.getDefById(data.missions.activeMissionId);
-          if (def && !missionSystem.isMissionComplete(data.missions.activeMissionId)) {
-            missionSystem.acceptMission(
-              missionSystem.getAllMissionDefs().indexOf(def)
-            );
-            if (data.missions.activeStepIndex > 0) {
-              missionSystem.setCurrentMissionStep(
-                data.missions.activeMissionId,
-                data.missions.activeStepIndex
-              );
-              // Also update the HUD objective
-              const step = def.steps[data.missions.activeStepIndex];
-              if (step && hud) {
-                hud.setObjective(step.text);
-              }
-            }
-          }
-        }
-      }
-
+      applySaveData(data, gameState, player, wantedSystem, combatSystem, missionSystem);
       return data;
-    } catch (e) {
-      // Corrupt save — treat as no save
+    } catch {
       return null;
     }
   }

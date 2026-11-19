@@ -79,7 +79,7 @@ export function createTrafficSystem(scene, seed, roadData, colliders) {
   }
 
   function roadWidthOffset() {
-    return 2.5; // lane offset from road centre
+    return 2.5; // lane offset from road centre (half of a standard lane width)
   }
 
   /** Update traffic cars: move, check gaps, despawn far cars, spawn new ones. */

@@ -1,10 +1,10 @@
 /**
- * Bootstrap: renderer, scene, camera, clock, game state, game loop
- * with fixed-step updates, city + player + HUD + minimap + shots wiring.
- * Now includes vehicles, traffic AI, pedestrians, wanted level, police,
- * combat, missions/story, and save/load.
+ * Solar Coast — entry point: renderer bootstrap, system wiring,
+ * fixed-step game loop, shot orchestration, and debug surface.
  *
- * Exposes window.__game for debugging.
+ * No exports.  This module bootstraps the entire game when the
+ * browser loads index.html.  A debug handle is attached to
+ * `window.__game` for console inspection.
  */
 
 import * as THREE from 'three';
@@ -12,7 +12,7 @@ import { buildCity } from './city.js';
 import { createPlayer } from './player.js';
 import { createMinimap } from './minimap.js';
 import { createHUD } from './hud.js';
-import { bindInput, consumeMouse, getActions, consumeKey, isKeyDown, setAudioEngine } from './input.js';
+import { bindInput, consumeMouse, getActions, setAudioEngine } from './input.js';
 import { parseShotParams, isShotScene, setupShotScene } from './shots.js';
 import { hashSeed } from './random.js';
 import { createVehicleSystem } from './vehicles.js';
@@ -26,10 +26,14 @@ import { createMissionSystem } from './missions.js';
 import { createSaveSystem } from './save.js';
 import { createAudioEngine } from './audio.js';
 
-// ---- Bootstrap ----
-const canvas = document.getElementById('game-canvas');
+/* ------------------------------------------------------------------ */
+/*  Renderer + scene + camera                                         */
+/* ------------------------------------------------------------------ */
+
+const domCanvas = document.getElementById('game-canvas');
+
 const renderer = new THREE.WebGLRenderer({
-  canvas,
+  canvas: domCanvas,
   antialias: true,
   powerPreference: 'low-power',
 });
@@ -39,110 +43,120 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+const worldScene = new THREE.Scene();
+const followCamera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  500
+);
 
-// ---- Shot params ----
-const { scene: shotScene, seed: shotSeed } = parseShotParams();
-const seed = shotSeed || hashSeed('solar-coast-1');
+/* ------------------------------------------------------------------ */
+/*  Shot parameters (URL-driven screenshot mode)                      */
+/* ------------------------------------------------------------------ */
 
-// ---- Build city ----
-const { colliders, roadData } = buildCity(scene, seed);
+const { scene: requestedShot, seed: urlSeed } = parseShotParams();
+const worldSeed = urlSeed || hashSeed('solar-coast-1');
 
-// ---- Create player ----
-const { mesh: playerMesh, state: player, update: updatePlayer, updateCamera: updatePlayerCamera } =
-  createPlayer(scene, colliders);
+/* ------------------------------------------------------------------ */
+/*  World generation                                                  */
+/* ------------------------------------------------------------------ */
 
-// ---- Vehicle system ----
-const vehicleSystem = createVehicleSystem(scene, seed, colliders, roadData);
+const { colliders, roadData } = buildCity(worldScene, worldSeed);
 
-// ---- Traffic system ----
-const trafficSystem = createTrafficSystem(scene, seed, roadData, colliders);
+/* ------------------------------------------------------------------ */
+/*  Player                                                            */
+/* ------------------------------------------------------------------ */
 
-// ---- Pedestrian system ----
-const pedSystem = createPedestrianSystem(scene, seed, colliders, roadData);
+const {
+  mesh: playerMesh,
+  state: playerState,
+  update: stepPlayer,
+  updateCamera: stepPlayerCam,
+} = createPlayer(worldScene, colliders);
 
-// ---- Wanted system ----
-const wantedSystem = createWantedSystem();
+/* ------------------------------------------------------------------ */
+/*  Systems — vehicles, traffic, walkers                              */
+/* ------------------------------------------------------------------ */
 
-// ---- Combat system ----
-const combatSystem = createCombatSystem(scene, colliders, null, wantedSystem);
+const vehicles = createVehicleSystem(worldScene, worldSeed, colliders, roadData);
+const traffic = createTrafficSystem(worldScene, worldSeed, roadData, colliders);
+const walkers = createPedestrianSystem(worldScene, worldSeed, colliders, roadData);
 
-// ---- Mission system ----
-const missionSystem = createMissionSystem(null, wantedSystem, combatSystem);
+/* ------------------------------------------------------------------ */
+/*  Systems — crime, enforcement, combat, missions, persistence, audio*/
+/* ------------------------------------------------------------------ */
 
-// ---- Police system ----
-const policeSystem = createPoliceSystem(scene, seed, colliders, roadData, null);
-
-// ---- Save system ----
-const saveSystem = createSaveSystem(null);
-
-// ---- Audio system ----
+const wanted = createWantedSystem();
+const combat = createCombatSystem(worldScene, colliders, null, wanted);
+const missions = createMissionSystem(null, wanted, combat);
+const police = createPoliceSystem(worldScene, worldSeed, colliders, roadData, null);
+const persistence = createSaveSystem(null);
 const audio = createAudioEngine();
 
-// ---- Game state ----
-const gameState = {
-  running: isShotScene(shotScene),
+/* ------------------------------------------------------------------ */
+/*  Runtime flags                                                     */
+/* ------------------------------------------------------------------ */
+
+const runtime = {
+  active: isShotScene(requestedShot),   // running or frozen on start screen
   paused: false,
-  mode: 'onFoot', // 'onFoot' | 'driving'
-  health: player.health,
+  travelMode: 'walking',               // 'walking' | 'driving'
   cash: 5000,
-  wanted: player.wanted,
-  speed: 0,
-  hasWeapon: false,
-  currentVehicle: null,
+  activeCar: null,
   busted: false,
   wasted: false,
-  respawnTimer: 0,
-  respawnPos: null,
+  respawnTick: 0,
 };
 
-// ---- Setup shot scene ----
-if (isShotScene(shotScene)) {
-  setupShotScene(shotScene, seed, player, camera);
+/* ------------------------------------------------------------------ */
+/*  Shot scene helpers                                                */
+/* ------------------------------------------------------------------ */
 
-  // For "drive" scene, create a player vehicle
-  if (shotScene === 'drive') {
-    const startCar = vehicleSystem.createCar(
+if (isShotScene(requestedShot)) {
+  setupShotScene(requestedShot, worldSeed, playerState, followCamera);
+
+  // ── Drive shot ──────────────────────────────────────────────────
+  if (requestedShot === 'drive') {
+    const hero = vehicles.createCar(
       new THREE.Vector3(0, 0.6, 0),
       0,
       0xcc2222
     );
-    startCar.isPlayer = true;
-    startCar.speed = 12;
-    gameState.mode = 'driving';
-    gameState.currentVehicle = startCar;
+    hero.isPlayer = true;
+    hero.speed = 12;
+    runtime.travelMode = 'driving';
+    runtime.activeCar = hero;
     playerMesh.visible = false;
   }
 
-  // For "chase" scene, create a player vehicle + police pursuit
-  if (shotScene === 'chase') {
-    const startCar = vehicleSystem.createCar(
+  // ── Chase shot ──────────────────────────────────────────────────
+  if (requestedShot === 'chase') {
+    const hero = vehicles.createCar(
       new THREE.Vector3(0, 0.6, 0),
       0,
       0xcc2222
     );
-    startCar.isPlayer = true;
-    startCar.speed = 15;
-    gameState.mode = 'driving';
-    gameState.currentVehicle = startCar;
+    hero.isPlayer = true;
+    hero.speed = 15;
+    runtime.travelMode = 'driving';
+    runtime.activeCar = hero;
     playerMesh.visible = false;
 
-    // Set wanted level to 3 via the wanted system (not just gameState)
-    wantedSystem.addHeat(3, 'chase_scene');
-    gameState.wanted = wantedSystem.getLevel();
+    wanted.addHeat(3, 'chase_scene');
+    runtime.cash = 5000;
 
-    // Spawn two police cars behind with proper police meshes
+    // Two pursuit cars behind
     for (let i = 0; i < 2; i++) {
-      const policeMesh = buildPoliceCarMesh();
+      const pursuitMesh = buildPoliceCarMesh();
       const pz = 10 + i * 10;
-      const px = (i === 0 ? -3 : 3);
-      policeMesh.position.set(px, 0.6, pz);
-      policeMesh.rotation.y = 0;
-      scene.add(policeMesh);
+      const px = i === 0 ? -3 : 3;
+      pursuitMesh.position.set(px, 0.6, pz);
+      pursuitMesh.rotation.y = 0;
+      worldScene.add(pursuitMesh);
 
-      policeSystem.getPoliceCars().push({
-        mesh: policeMesh,
+      police.getPoliceCars().push({
+        mesh: pursuitMesh,
         position: new THREE.Vector3(px, 0.6, pz),
         yaw: 0,
         speed: 16 + i * 2,
@@ -153,236 +167,236 @@ if (isShotScene(shotScene)) {
     }
   }
 
-  // For "mission" scene, set up M1 context with a target car and marker
-  if (shotScene === 'mission') {
-    // Place a red sedan at the M1 objective
-    const targetCar = vehicleSystem.createCar(
+  // ── Mission shot ────────────────────────────────────────────────
+  if (requestedShot === 'mission') {
+    const targetCar = vehicles.createCar(
       new THREE.Vector3(-30, 0.6, 50),
       0,
       0xcc2222
     );
     targetCar.isMissionTarget = true;
-
-    // Accept M1 so the marker shows
-    missionSystem.acceptMission(0);
-    missionSystem.onVehicleEnter(targetCar, gameState); // advance past "find car" step
+    missions.acceptMission(0);
+    missions.onVehicleEnter(targetCar, runtime);
   }
 }
 
-// ---- Mission 3D beacon (pulsing gold marker at active objective) ----
-let missionBeacon = null;
-let missionBeaconLight = null;
+/* ------------------------------------------------------------------ */
+/*  Mission beacon (pulsing gold octahedron above objective)          */
+/* ------------------------------------------------------------------ */
 
-function updateMissionBeacon(markerPos, dt) {
-  // Remove old beacon
-  if (missionBeacon) {
-    scene.remove(missionBeacon);
-    missionBeacon = null;
+let beaconMesh = null;
+let beaconLight = null;
+
+function refreshBeacon(position) {
+  // Tear down previous beacon
+  if (beaconMesh) {
+    if (beaconMesh.userData.parts) {
+      for (const part of beaconMesh.userData.parts) {
+        worldScene.remove(part);
+      }
+    }
+    worldScene.remove(beaconMesh);
+    beaconMesh = null;
   }
-  if (missionBeaconLight) {
-    scene.remove(missionBeaconLight);
-    missionBeaconLight = null;
+  if (beaconLight) {
+    worldScene.remove(beaconLight);
+    beaconLight = null;
   }
+  if (!position) return;
 
-  if (!markerPos) return;
+  const now = performance.now();
+  const breathe = 0.6 + 0.4 * Math.sin(now * 0.004);
+  const lift = 8;
 
-  const pulse = 0.6 + 0.4 * Math.sin(performance.now() * 0.004);
-  const height = 8;
-
-  // Gold diamond beacon
-  const beaconGeo = new THREE.OctahedronGeometry(0.8 * pulse);
-  const beaconMat = new THREE.MeshStandardMaterial({
+  const geo = new THREE.OctahedronGeometry(0.8 * breathe);
+  const mat = new THREE.MeshStandardMaterial({
     color: 0xffdd00,
     emissive: 0xffaa00,
     emissiveIntensity: 0.8,
     transparent: true,
     opacity: 0.9,
   });
-  missionBeacon = new THREE.Mesh(beaconGeo, beaconMat);
-  missionBeacon.position.set(markerPos.x, height, markerPos.z);
-  missionBeacon.rotation.y = performance.now() * 0.002;
-  scene.add(missionBeacon);
+  beaconMesh = new THREE.Mesh(geo, mat);
+  beaconMesh.position.set(position.x, lift, position.z);
+  beaconMesh.rotation.y = now * 0.002;
+  worldScene.add(beaconMesh);
 
-  // Glow light
-  missionBeaconLight = new THREE.PointLight(0xffdd00, 2, 15);
-  missionBeaconLight.position.set(markerPos.x, height, markerPos.z);
-  scene.add(missionBeaconLight);
+  beaconLight = new THREE.PointLight(0xffdd00, 2, 15);
+  beaconLight.position.set(position.x, lift, position.z);
+  worldScene.add(beaconLight);
 
   // Ground ring
   const ringGeo = new THREE.RingGeometry(1.5, 2.2, 16);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xffdd00,
     transparent: true,
-    opacity: 0.4 * pulse,
+    opacity: 0.4 * breathe,
     side: THREE.DoubleSide,
   });
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(markerPos.x, 0.1, markerPos.z);
-  scene.add(ring);
+  ring.position.set(position.x, 0.1, position.z);
+  worldScene.add(ring);
 
-  // Cleanup ring on next update (it's temporary)
-  ring.userData.isBeaconPart = true;
-  if (!missionBeacon.userData.parts) missionBeacon.userData.parts = [];
-  missionBeacon.userData.parts.push(ring);
+  beaconMesh.userData.parts = [ring];
 }
 
-// ---- HUD ----
-const hud = createHUD();
+/* ------------------------------------------------------------------ */
+/*  HUD + minimap                                                     */
+/* ------------------------------------------------------------------ */
 
-// Wire mute button
+const hud = createHUD();
 hud.wireMuteButton(audio);
 
-// Check for existing save and enable continue button
-if (saveSystem.hasSave()) {
+if (persistence.hasSave()) {
   hud.setContinueEnabled(true);
 }
 
-hud.showStartScreen(!gameState.running);
+hud.showStartScreen(!runtime.active);
 
 hud.wireButtons({
   onStartGame() {
     audio.init();
-    saveSystem.clearSave();
-    gameState.running = true;
-    gameState.paused = false;
-    gameState.cash = 500;
-    gameState.health = 100;
+    persistence.clearSave();
+    runtime.active = true;
+    runtime.paused = false;
+    runtime.cash = 500;
     hud.showStartScreen(false);
     hud.showMessage('Welcome to Solar Coast!');
-    canvas.requestPointerLock();
+    domCanvas.requestPointerLock();
   },
   onContinue() {
     audio.init();
-    const loaded = saveSystem.load(gameState, player, wantedSystem, combatSystem, missionSystem);
-    if (loaded) {
-      gameState.running = true;
-      gameState.paused = false;
+    const ok = persistence.load(runtime, playerState, wanted, combat, missions);
+    if (ok) {
+      runtime.active = true;
+      runtime.paused = false;
       hud.showStartScreen(false);
       hud.showMessage('Welcome back!');
-      canvas.requestPointerLock();
+      domCanvas.requestPointerLock();
     } else {
       hud.showMessage('No valid save found — starting new game');
-      gameState.cash = 500;
-      gameState.running = true;
-      gameState.paused = false;
+      runtime.cash = 500;
+      runtime.active = true;
+      runtime.paused = false;
       hud.showStartScreen(false);
-      canvas.requestPointerLock();
+      domCanvas.requestPointerLock();
     }
   },
   onResume() {
-    gameState.paused = false;
+    runtime.paused = false;
     hud.showPauseScreen(false);
-    canvas.requestPointerLock();
+    domCanvas.requestPointerLock();
   },
   onMissionSelect(idx) {
-    const result = missionSystem.acceptMission(idx);
+    const result = missions.acceptMission(idx);
     if (result) {
       hud.showPauseScreen(false);
-      hud.showMessage('Mission accepted: ' + result.def.name);
-      canvas.requestPointerLock();
+      hud.showMessage('Mission accepted: ' + result.def.title);
+      domCanvas.requestPointerLock();
     }
   },
 });
 
-// Wire HUD to mission and save systems
-hud._missionSystem = missionSystem;
-hud._saveSystem = saveSystem;
+// Direct references so HUD can reach mission/save data
+hud._missionSystem = missions;
+hud._saveSystem = persistence;
 
-// ---- Minimap ----
-const minimapContainer = document.getElementById('minimap-container');
-const minimap = createMinimap(minimapContainer);
+const minimapRoot = document.getElementById('minimap-container');
+const minimap = createMinimap(minimapRoot);
 
-// ---- Input ----
+/* ------------------------------------------------------------------ */
+/*  Input                                                             */
+/* ------------------------------------------------------------------ */
+
 setAudioEngine(audio);
-bindInput(canvas);
+bindInput(domCanvas);
 
-// ---- Camera smoothing (for vehicle follow) ----
-const camSmoothPos = new THREE.Vector3();
-const camSmoothTarget = new THREE.Vector3();
-let camInitialized = false;
+/* ------------------------------------------------------------------ */
+/*  Camera smoothing state                                            */
+/* ------------------------------------------------------------------ */
 
-/** Update camera for driving mode (follow behind the car). */
-function updateDriveCamera(camera, vehicle, mouse) {
-  const targetYaw = vehicle.yaw + mouse.dx * CAMERA.sensitivity * 0.5;
+const camPosBuf = new THREE.Vector3();
+const camLookBuf = new THREE.Vector3();
+let camReady = false;
+
+/** Follow a vehicle from behind with smooth interpolation. */
+function smoothFollowCamera(cam, car, mouse) {
+  const desiredYaw = car.yaw + mouse.dx * CAMERA.sensitivity * 0.5;
   const dist = VEHICLE.cameraDistance;
   const height = VEHICLE.cameraHeight;
 
-  const idealPos = new THREE.Vector3(
-    vehicle.position.x + Math.sin(targetYaw) * Math.cos(0.1) * dist,
-    vehicle.position.y + height,
-    vehicle.position.z + Math.cos(targetYaw) * Math.cos(0.1) * dist
+  const ideal = new THREE.Vector3(
+    car.position.x + Math.sin(desiredYaw) * Math.cos(0.1) * dist,
+    car.position.y + height,
+    car.position.z + Math.cos(desiredYaw) * Math.cos(0.1) * dist
   );
-  const lookTarget = new THREE.Vector3(
-    vehicle.position.x,
-    vehicle.position.y + 1.5,
-    vehicle.position.z - 10
+  const lookAt = new THREE.Vector3(
+    car.position.x,
+    car.position.y + 1.5,
+    car.position.z - 10
   );
 
-  if (!camInitialized) {
-    camSmoothPos.copy(idealPos);
-    camSmoothTarget.copy(lookTarget);
-    camInitialized = true;
+  if (!camReady) {
+    camPosBuf.copy(ideal);
+    camLookBuf.copy(lookAt);
+    camReady = true;
   }
 
-  const s = VEHICLE.cameraSmoothing;
-  camSmoothPos.lerp(idealPos, s);
-  camSmoothTarget.lerp(lookTarget, s);
+  const t = VEHICLE.cameraSmoothing;
+  camPosBuf.lerp(ideal, t);
+  camLookBuf.lerp(lookAt, t);
 
-  camera.position.copy(camSmoothPos);
-  camera.lookAt(camSmoothTarget);
+  cam.position.copy(camPosBuf);
+  cam.lookAt(camLookBuf);
 }
 
-/** Enter a parked vehicle. */
-function enterVehicle(car) {
-  car.occupied = true;
-  const activeCar = vehicleSystem.createCar(
-    car.position.clone(),
-    car.yaw,
-    car.color
+/* ------------------------------------------------------------------ */
+/*  Vehicle enter / exit                                              */
+/* ------------------------------------------------------------------ */
+
+function getIntoVehicle(parkedCar) {
+  parkedCar.occupied = true;
+  const active = vehicles.createCar(
+    parkedCar.position.clone(),
+    parkedCar.yaw,
+    parkedCar.color
   );
-  activeCar.isPlayer = true;
-  activeCar.steerAngle = 0;
-  gameState.mode = 'driving';
-  gameState.currentVehicle = activeCar;
+  active.isPlayer = true;
+  active.steerAngle = 0;
+  runtime.travelMode = 'driving';
+  runtime.activeCar = active;
   playerMesh.visible = false;
-  camInitialized = false;
+  camReady = false;
   hud.showMessage('Press E to exit');
   audio.play('carDoor');
   audio.startEngine();
-
-  // Crime: stealing a car
-  wantedSystem.addHeat(1, 'stolen_vehicle');
-
-  // Check mission: M1 step — steal the car
-  missionSystem.onVehicleEnter(activeCar, gameState);
+  wanted.addHeat(1, 'stolen_vehicle');
+  missions.onVehicleEnter(active, runtime);
 }
 
-/** Exit the current vehicle. */
-function exitVehicle() {
-  const v = gameState.currentVehicle;
-  if (!v) return;
+function getOutOfVehicle() {
+  const car = runtime.activeCar;
+  if (!car) return;
 
-  // Place player beside the car
-  const side = new THREE.Vector3(
-    v.position.x + Math.cos(v.yaw) * 2.5,
-    0,
-    v.position.z - Math.sin(v.yaw) * 2.5
-  );
-  player.position.copy(side);
+  // Drop player beside the car
+  const exitX = car.position.x + Math.cos(car.yaw) * 2.5;
+  const exitZ = car.position.z - Math.sin(car.yaw) * 2.5;
+  const side = new THREE.Vector3(exitX, 0, exitZ);
+  playerState.position.copy(side);
   playerMesh.position.copy(side);
   playerMesh.visible = true;
 
-  // Remove the active vehicle, restore the parked one
-  scene.remove(v.mesh);
-  const idx = vehicleSystem.vehicles.indexOf(v);
-  if (idx >= 0) vehicleSystem.vehicles.splice(idx, 1);
+  // Remove active vehicle from scene and list
+  worldScene.remove(car.mesh);
+  const idx = vehicles.vehicles.indexOf(car);
+  if (idx >= 0) vehicles.vehicles.splice(idx, 1);
 
-  // Find the matching parked car and free it
-  for (const pc of vehicleSystem.parkedCars) {
+  // Free the matching parked car
+  for (const pc of vehicles.parkedCars) {
     if (pc.occupied) {
-      const dx = pc.position.x - v.position.x;
-      const dz = pc.position.z - v.position.z;
+      const dx = pc.position.x - car.position.x;
+      const dz = pc.position.z - car.position.z;
       if (Math.sqrt(dx * dx + dz * dz) < 5) {
         pc.occupied = false;
         break;
@@ -390,158 +404,158 @@ function exitVehicle() {
     }
   }
 
-  gameState.mode = 'onFoot';
-  gameState.currentVehicle = null;
-  camInitialized = false;
+  runtime.travelMode = 'walking';
+  runtime.activeCar = null;
+  camReady = false;
   hud.showMessage('On foot again');
   audio.stopEngine();
   audio.play('carDoor');
 }
 
-/** Respawn player at a location after bust or death. */
-function respawnAt(position, message) {
-  player.position.copy(position);
-  playerMesh.position.copy(position);
+/* ------------------------------------------------------------------ */
+/*  Respawn after bust or death                                       */
+/* ------------------------------------------------------------------ */
+
+function respawnPlayer(at, note) {
+  playerState.position.copy(at);
+  playerMesh.position.copy(at);
   playerMesh.visible = true;
-  gameState.mode = 'onFoot';
-  // Clean up any remaining vehicle reference
-  if (gameState.currentVehicle) {
-    scene.remove(gameState.currentVehicle.mesh);
-    const idx = vehicleSystem.vehicles.indexOf(gameState.currentVehicle);
-    if (idx >= 0) vehicleSystem.vehicles.splice(idx, 1);
-    gameState.currentVehicle = null;
+  runtime.travelMode = 'walking';
+
+  // Clean up lingering vehicle reference
+  if (runtime.activeCar) {
+    worldScene.remove(runtime.activeCar.mesh);
+    const idx = vehicles.vehicles.indexOf(runtime.activeCar);
+    if (idx >= 0) vehicles.vehicles.splice(idx, 1);
+    runtime.activeCar = null;
   }
-  camInitialized = false;
-  hud.showMessage(message);
+
+  camReady = false;
+  hud.showMessage(note);
 }
 
-// ---- Fixed-step game loop ----
+/* ------------------------------------------------------------------ */
+/*  Fixed-step loop                                                   */
+/* ------------------------------------------------------------------ */
+
 const FIXED_DT = 1 / 60;
 let accumulator = 0;
-const clock = new THREE.Clock();
-let playerPos = new THREE.Vector3(); // Track for HUD/minimap outside the update loop
+const tickClock = new THREE.Clock();
+let trackerPos = new THREE.Vector3();
 
-// Re-wire HUD to use mission/save
+// Hook HUD objective setter
 hud._updateObjective = hud.setObjective;
 
-function gameLoop() {
-  requestAnimationFrame(gameLoop);
+function tick() {
+  requestAnimationFrame(tick);
 
-  const dt = Math.min(clock.getDelta(), 0.1);
-  accumulator += dt;
+  const rawDt = Math.min(tickClock.getDelta(), 0.1);
+  accumulator += rawDt;
 
-  if (!gameState.running || gameState.paused) {
-    // Update mission beacon even when paused (for screenshots)
-    if (isShotScene(shotScene) || gameState.paused) {
-      const markerPos = missionSystem.getActiveMarkerPos();
-      updateMissionBeacon(markerPos, dt);
-    }
-    renderer.render(scene, camera);
+  // ── Paused or not yet started ───────────────────────────────────
+  if (!runtime.active || runtime.paused) {
+    const mPos = missions.getActiveMarkerPos();
+    refreshBeacon(mPos, rawDt);
+    renderer.render(worldScene, followCamera);
     return;
   }
 
-  // Auto-save
-  saveSystem.autoSave(dt, gameState, player, wantedSystem, combatSystem, missionSystem);
+  // Auto-save guard
+  persistence.autoSave(rawDt, runtime, playerState, wanted, combat, missions);
 
-  // Handle busted state
-  if (gameState.busted) {
-    gameState.respawnTimer += dt;
-    if (gameState.respawnTimer > 2) {
-      const cashLost = policeSystem.handleBust(gameState);
-      hud.showMessage('BUSTED! Lost $' + cashLost.toLocaleString());
+  // Busted overlay
+  if (runtime.busted) {
+    runtime.respawnTick += rawDt;
+    if (runtime.respawnTick > 2) {
+      const penalty = police.handleBust(runtime);
+      hud.showMessage('BUSTED! Lost $' + penalty.toLocaleString());
       audio.play('bustedSting');
-      // Respawn at police station (downtown)
-      respawnAt(new THREE.Vector3(20, 0, 20), 'Released from station');
-      wantedSystem.reset();
-      policeSystem.despawnAll();
-      gameState.busted = false;
-      gameState.respawnTimer = 0;
-      gameState.respawnPos = null;
+      respawnPlayer(new THREE.Vector3(20, 0, 20), 'Released from station');
+      wanted.reset();
+      police.despawnAll();
+      runtime.busted = false;
+      runtime.respawnTick = 0;
     }
   }
 
-  // Handle wasted state
-  if (gameState.wasted) {
-    gameState.respawnTimer += dt;
-    if (gameState.respawnTimer > 2) {
-      const cashLost = combatSystem.handleWasted(gameState);
-      hud.showMessage('WASTED! Lost $' + cashLost.toLocaleString());
+  // Wasted overlay
+  if (runtime.wasted) {
+    runtime.respawnTick += rawDt;
+    if (runtime.respawnTick > 2) {
+      const penalty = combat.handleWasted(runtime);
+      hud.showMessage('WASTED! Lost $' + penalty.toLocaleString());
       audio.play('wastedSting');
-      // Respawn at hospital (edge of town)
-      respawnAt(new THREE.Vector3(-30, 0, -30), 'Released from hospital');
-      // Wanted unchanged
-      gameState.wasted = false;
-      gameState.respawnTimer = 0;
+      respawnPlayer(new THREE.Vector3(-30, 0, -30), 'Released from hospital');
+      runtime.wasted = false;
+      runtime.respawnTick = 0;
     }
   }
 
+  // ── Fixed-step update ───────────────────────────────────────────
   while (accumulator >= FIXED_DT) {
     accumulator -= FIXED_DT;
 
-    // Skip updates during bust/wasted overlay
-    if (gameState.busted || gameState.wasted) {
-      continue;
-    }
+    if (runtime.busted || runtime.wasted) continue;
 
     const actions = getActions();
 
+    // Pause toggle
     if (actions.pause) {
-      gameState.paused = !gameState.paused;
-      hud.showPauseScreen(gameState.paused);
-      if (gameState.paused) {
+      runtime.paused = !runtime.paused;
+      hud.showPauseScreen(runtime.paused);
+      if (runtime.paused) {
         document.exitPointerLock();
-        // Show mission select on start screen
-        const unlocked = missionSystem.getUnlockedMissions();
-        const missionDefs = missionSystem.getAllMissionDefs();
-        const completed = missionSystem.getCompletedMissions();
-        hud.updateMissionSelect(unlocked, missionDefs, completed);
+        const unlocked = missions.getUnlockedMissions();
+        const defs = missions.getAllMissionDefs();
+        const done = missions.getCompletedMissions();
+        hud.updateMissionSelect(unlocked, defs, done);
         hud.showMissionSelect(true);
       } else {
         hud.showMissionSelect(false);
-        canvas.requestPointerLock();
+        domCanvas.requestPointerLock();
       }
       continue;
     }
 
     const mouse = consumeMouse();
 
-    // Enter / exit vehicle
+    // Interact (enter / exit vehicle)
     if (actions.interact) {
-      if (gameState.mode === 'onFoot') {
-        const nearby = vehicleSystem.getClosest(player.position);
-        if (nearby) enterVehicle(nearby);
-      } else if (gameState.mode === 'driving') {
-        exitVehicle();
+      if (runtime.travelMode === 'walking') {
+        const nearest = vehicles.getClosest(playerState.position);
+        if (nearest) getIntoVehicle(nearest);
+      } else {
+        getOutOfVehicle();
       }
     }
 
-    // Punch action
-    if (actions.punch && gameState.mode === 'onFoot') {
+    // Punch
+    if (actions.punch && runtime.travelMode === 'walking') {
       audio.play('punch');
-      const punchResult = combatSystem.tryPunch(player.position, player.yaw, pedSystem.getPedestrians());
-      if (punchResult && punchResult.hit && punchResult.ped) {
-        const events = combatSystem.handlePedHit(punchResult.ped, pedSystem.getPedestrians());
+      const result = combat.tryPunch(
+        playerState.position,
+        playerState.yaw,
+        walkers.getPedestrians()
+      );
+      if (result && result.hit && result.ped) {
+        combat.handlePedHit(result.ped, walkers.getPedestrians());
         audio.play('pedYelp');
 
-        // Check mission: M3 shakedown
-        const pedPos = punchResult.ped.position;
-        const missionPunch = missionSystem.tryPunchMissionPed(player.position, {
+        const pedPos = result.ped.position;
+        const missionPunch = missions.tryPunchMissionPed(playerState.position, {
           hit: true,
           pedPos,
         });
 
-        // Crime: punching a pedestrian (only if not a mission-collect punch)
+        // Crime heat (skip if mission-collect punch)
         if (!missionPunch) {
-          wantedSystem.addHeat(1, 'assault');
-
-          // Check if police nearby for extra heat
-          const policePositions = policeSystem.getPolicePositions();
-          for (const pp of policePositions) {
-            const dx = pp.x - player.position.x;
-            const dz = pp.z - player.position.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < WANTED.policeHeatRadius) {
-              wantedSystem.addHeat(1, 'crime_witnessed');
+          wanted.addHeat(1, 'assault');
+          const cops = police.getPolicePositions();
+          for (const cp of cops) {
+            const dx = cp.x - playerState.position.x;
+            const dz = cp.z - playerState.position.z;
+            if (Math.sqrt(dx * dx + dz * dz) < WANTED.policeHeatRadius) {
+              wanted.addHeat(1, 'crime_witnessed');
               break;
             }
           }
@@ -549,23 +563,19 @@ function gameLoop() {
       }
     }
 
-    // Update player
-    if (gameState.mode === 'onFoot') {
-      updatePlayer(actions, FIXED_DT);
-      updatePlayerCamera(camera, actions, mouse);
-
-      // Sync health from combat system
-      player.health = combatSystem.getPlayerHealthRaw();
+    // ── Player on foot ────────────────────────────────────────────
+    if (runtime.travelMode === 'walking') {
+      stepPlayer(actions, FIXED_DT);
+      stepPlayerCam(followCamera, actions, mouse);
+      playerState.health = combat.getPlayerHealthRaw();
     }
 
-    // Update systems
-    if (gameState.mode === 'onFoot') {
-      // Player already updated above
-    } else if (gameState.mode === 'driving' && gameState.currentVehicle) {
-      const v = gameState.currentVehicle;
-      // Drive physics
+    // ── Driving ───────────────────────────────────────────────────
+    if (runtime.travelMode === 'driving' && runtime.activeCar) {
+      const v = runtime.activeCar;
       const { forward, backward, left, right, handbrake } = actions;
 
+      // Throttle / brake
       if (forward) {
         v.speed = Math.min(v.speed + VEHICLE.acceleration * FIXED_DT, VEHICLE.maxSpeed);
       } else if (backward) {
@@ -579,45 +589,44 @@ function gameLoop() {
         v.speed *= Math.pow(0.9, FIXED_DT * 60);
       }
 
-      // Speed-sensitive steering
-      const steerFactor = Math.min(1, Math.abs(v.speed) / VEHICLE.steerFadeSpeed);
-      const steerAmount = VEHICLE.steerMax * (1 - steerFactor * 0.6);
+      // Steering
+      const steerFade = Math.min(1, Math.abs(v.speed) / VEHICLE.steerFadeSpeed);
+      const steer = VEHICLE.steerMax * (1 - steerFade * 0.6);
       if (left) {
-        v.yaw += steerAmount * Math.sign(v.speed || 0.1);
+        v.yaw += steer * Math.sign(v.speed || 0.1);
         v.steerAngle = Math.min(v.steerAngle + 0.1, 0.4);
       } else if (right) {
-        v.yaw -= steerAmount * Math.sign(v.speed || 0.1);
+        v.yaw -= steer * Math.sign(v.speed || 0.1);
         v.steerAngle = Math.max(v.steerAngle - 0.1, -0.4);
       } else {
         v.steerAngle *= 0.85;
       }
 
-      // Move
+      // Translate
       v.position.x -= Math.sin(v.yaw) * v.speed * FIXED_DT;
       v.position.z -= Math.cos(v.yaw) * v.speed * FIXED_DT;
 
       // Building collision
       for (const col of colliders) {
-        const carR = 2;
-        if (v.position.x + carR > col.minX && v.position.x - carR < col.maxX &&
-            v.position.z + carR > col.minZ && v.position.z - carR < col.maxZ) {
-          const overlapX = Math.min(v.position.x + carR - col.minX, col.maxX - (v.position.x - carR));
-          const overlapZ = Math.min(v.position.z + carR - col.minZ, col.maxZ - (v.position.z - carR));
-          if (overlapX < overlapZ) {
-            v.position.x = v.position.x < (col.minX + col.maxX) / 2 ? col.minX - carR : col.maxX + carR;
+        const r = 2;
+        if (v.position.x + r > col.minX && v.position.x - r < col.maxX &&
+            v.position.z + r > col.minZ && v.position.z - r < col.maxZ) {
+          const ox = Math.min(v.position.x + r - col.minX, col.maxX - (v.position.x - r));
+          const oz = Math.min(v.position.z + r - col.minZ, col.maxZ - (v.position.z - r));
+          if (ox < oz) {
+            v.position.x = v.position.x < (col.minX + col.maxX) / 2
+              ? col.minX - r : col.maxX + r;
           } else {
-            v.position.z = v.position.z < (col.minZ + col.maxZ) / 2 ? col.minZ - carR : col.maxZ + carR;
+            v.position.z = v.position.z < (col.minZ + col.maxZ) / 2
+              ? col.minZ - r : col.maxZ + r;
           }
-          if (Math.abs(v.speed) > 3) {
-            audio.play('crash');
-          }
+          if (Math.abs(v.speed) > 3) audio.play('crash');
           v.speed *= 0.5;
         }
       }
 
-      // Car-car collision with traffic
-      const trafficCars = trafficSystem.getTrafficCars();
-      for (const tc of trafficCars) {
+      // Car-car collision
+      for (const tc of traffic.getTrafficCars()) {
         const dx = v.position.x - tc.position.x;
         const dz = v.position.z - tc.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
@@ -627,24 +636,21 @@ function gameLoop() {
           v.position.z += (dz / dist) * push;
           if (Math.abs(v.speed) > 5) {
             audio.play('crash');
-            // Crime: hitting a traffic car
-            wantedSystem.addHeat(0.5, 'hit_vehicle');
+            wanted.addHeat(0.5, 'hit_vehicle');
           }
           v.speed *= 0.7;
         }
       }
 
-      // Hit pedestrians with car
-      for (const ped of pedSystem.getPedestrians()) {
+      // Run over pedestrians
+      for (const ped of walkers.getPedestrians()) {
         const dx = ped.position.x - v.position.x;
         const dz = ped.position.z - v.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist < 2.5 && Math.abs(v.speed) > 3) {
-          // Hit!
           audio.play('pedYelp');
-          combatSystem.handlePlayerDamage(10);
-          wantedSystem.addHeat(1, 'hit_pedestrian');
-          // Push pedestrian away
+          combat.handlePlayerDamage(10);
+          wanted.addHeat(1, 'hit_pedestrian');
           ped.position.x += (dx / dist) * 3;
           ped.position.z += (dz / dist) * 3;
           ped.state = 'flee';
@@ -652,7 +658,7 @@ function gameLoop() {
         }
       }
 
-      // Update vehicle mesh
+      // Update mesh
       v.mesh.position.set(v.position.x, 0.6, v.position.z);
       v.mesh.rotation.y = v.yaw;
       if (v.mesh.userData && v.mesh.userData.frontWheels) {
@@ -661,59 +667,51 @@ function gameLoop() {
         }
       }
 
-      // Engine hum follows speed
       audio.updateEngine(Math.abs(v.speed) / VEHICLE.maxSpeed);
+      smoothFollowCamera(followCamera, v, mouse);
 
-      // Camera
-      updateDriveCamera(camera, v, mouse);
-
-      // Sync player position to vehicle (for minimap)
-      player.position.copy(v.position);
-      player.yaw = v.yaw;
+      // Sync player position to car for minimap
+      playerState.position.copy(v.position);
+      playerState.yaw = v.yaw;
     }
 
-    // Traffic
-    playerPos = gameState.mode === 'driving' && gameState.currentVehicle
-      ? gameState.currentVehicle.position
-      : player.position;
-    trafficSystem.update(FIXED_DT, playerPos);
+    // ── System updates ────────────────────────────────────────────
+    trackerPos = runtime.travelMode === 'driving' && runtime.activeCar
+      ? runtime.activeCar.position
+      : playerState.position;
 
-    // Pedestrians
-    const nearbyVehicle = gameState.mode === 'driving' ? gameState.currentVehicle : null;
-    const playerSpeed = gameState.currentVehicle ? Math.abs(gameState.currentVehicle.speed) : player.speed;
-    pedSystem.update(FIXED_DT, playerPos, playerSpeed, nearbyVehicle);
+    traffic.update(FIXED_DT, trackerPos);
 
-    // Vehicle system update (for parked cars)
-    vehicleSystem.update(FIXED_DT, actions, player, gameState);
+    const nearbyCar = runtime.travelMode === 'driving' ? runtime.activeCar : null;
+    const spd = runtime.activeCar
+      ? Math.abs(runtime.activeCar.speed)
+      : playerState.speed;
+    walkers.update(FIXED_DT, trackerPos, spd, nearbyCar);
 
-    // Wanted system update
-    const policePositions = policeSystem.getPolicePositions();
-    wantedSystem.update(FIXED_DT, player, { policePositions });
+    vehicles.update(FIXED_DT, actions, playerState, runtime);
 
-    // Police system update
-    const wantedLevel = wantedSystem.getLevel();
-    if (wantedLevel > 0) {
-      policeSystem.spawnForWanted(wantedLevel, playerPos, gameState.currentVehicle);
+    const cops = police.getPolicePositions();
+    wanted.update(FIXED_DT, playerState, { policePositions: cops });
+
+    const wLevel = wanted.getLevel();
+    if (wLevel > 0) {
+      police.spawnForWanted(wLevel, trackerPos, runtime.activeCar);
       audio.play('siren', { on: true });
     } else {
-      // Despawn all police when wanted hits 0
-      policeSystem.despawnAll();
+      police.despawnAll();
       audio.play('siren', { on: false });
     }
-    policeSystem.update(FIXED_DT, playerPos, gameState.mode === 'driving', gameState);
+    police.update(FIXED_DT, trackerPos, runtime.travelMode === 'driving', runtime);
 
-    // Combat system update
-    combatSystem.update(FIXED_DT, playerPos, pedSystem.getPedestrians());
+    combat.update(FIXED_DT, trackerPos, walkers.getPedestrians());
 
-    // Mission system update
-    const prevMissionActive = missionSystem.getMissionState()?.active;
-    missionSystem.update(FIXED_DT, gameState, playerPos);
-    const postMissionState = missionSystem.getMissionState();
+    const missionWasActive = missions.getMissionState()?.active;
+    missions.update(FIXED_DT, runtime, trackerPos);
+    const missionNow = missions.getMissionState();
 
-    // Detect mission completion or failure
-    if (prevMissionActive && (!postMissionState || !postMissionState.active)) {
-      // Check if it was a completion (completed list grew)
-      const ms = missionSystem.getMissionState();
+    // Detect mission completion / failure for audio cues
+    if (missionWasActive && (!missionNow || !missionNow.active)) {
+      const ms = missions.getMissionState();
       if (ms && ms.completed.length > (audio._prevCompleted || 0)) {
         audio.play('missionOk');
         audio.play('cash');
@@ -721,147 +719,157 @@ function gameLoop() {
         audio.play('missionFail');
       }
       audio._prevCompleted = ms ? ms.completed.length : 0;
-    } else if (!prevMissionActive && postMissionState && postMissionState.active) {
-      audio._prevCompleted = postMissionState.completed.length;
+    } else if (!missionWasActive && missionNow && missionNow.active) {
+      audio._prevCompleted = missionNow.completed.length;
     }
 
-    // Check for wasted
-    if (combatSystem.isWasted() && !gameState.wasted) {
-      gameState.wasted = true;
-      gameState.respawnTimer = 0;
+    // Wasted check
+    if (combat.isWasted() && !runtime.wasted) {
+      runtime.wasted = true;
+      runtime.respawnTick = 0;
     }
 
-    // Check for busted (from police system)
-    if (policeSystem.isBustTriggered() && !gameState.busted && !gameState.wasted) {
-      gameState.busted = true;
-      gameState.respawnTimer = 0;
+    // Bust check
+    if (police.isBustTriggered() && !runtime.busted && !runtime.wasted) {
+      runtime.busted = true;
+      runtime.respawnTick = 0;
     }
 
-    // Police damage to player (ramming)
-    if (gameState.mode === 'onFoot') {
-      for (const pc of policeSystem.getPoliceCars()) {
-        const dx = pc.position.x - player.position.x;
-        const dz = pc.position.z - player.position.z;
+    // Police ram player on foot
+    if (runtime.travelMode === 'walking') {
+      for (const pc of police.getPoliceCars()) {
+        const dx = pc.position.x - playerState.position.x;
+        const dz = pc.position.z - playerState.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
         if (dist < 2.5 && Math.abs(pc.speed) > 3) {
-          combatSystem.handlePlayerDamage(8);
+          combat.handlePlayerDamage(8);
         }
       }
     }
 
     // Interact prompt
-    if (gameState.mode === 'onFoot') {
-      const nearby = vehicleSystem.getClosest(player.position);
-      // Check if near mission accept marker
-      const activeMission = missionSystem.getActiveMission();
-      if (activeMission) {
-        hud.showInteractPrompt(activeMission.def.steps[activeMission.stepIndex]?.text || '');
+    if (runtime.travelMode === 'walking') {
+      const near = vehicles.getClosest(playerState.position);
+      const activeMis = missions.getActiveMission();
+      if (activeMis) {
+        const obj = activeMis.def.objectives[activeMis.stepIdx];
+        hud.showInteractPrompt(obj ? obj.text : '');
       } else {
-        hud.showInteractPrompt(nearby ? 'Press E to enter' : '');
+        hud.showInteractPrompt(near ? 'Press E to enter' : '');
       }
     } else {
       hud.showInteractPrompt('Press E to exit');
     }
 
-    // Sync HUD
-    gameState.health = combatSystem.getPlayerHealthRaw();
-    gameState.wanted = wantedSystem.getLevel();
-    gameState.speed = gameState.currentVehicle ? Math.abs(gameState.currentVehicle.speed) : player.speed;
+    // Sync HUD state
+    runtime.cash = runtime.cash; // cash updated by missions/combat
+    runtime.health = combat.getPlayerHealthRaw();
+    runtime.wanted = wanted.getLevel();
+    runtime.speed = runtime.activeCar
+      ? Math.abs(runtime.activeCar.speed)
+      : playerState.speed;
 
-    // Auto-save on mission complete (only when count increases)
-    const missionState = missionSystem.getMissionState();
-    if (missionState && !missionState.active && missionState.completed.length > 0) {
-      const prevCount = gameState._lastSavedMissionCount || 0;
-      if (missionState.completed.length > prevCount) {
-        saveSystem.save(gameState, player, wantedSystem, combatSystem, missionSystem);
-        gameState._lastSavedMissionCount = missionState.completed.length;
+    // Auto-save on mission completion
+    const mState = missions.getMissionState();
+    if (mState && !mState.active) {
+      const prev = runtime._lastSavedMissionCount || 0;
+      if (mState.completed.length > prev) {
+        persistence.save(runtime, playerState, wanted, combat, missions);
+        runtime._lastSavedMissionCount = mState.completed.length;
       }
     }
   }
 
-  // Render
-  renderer.render(scene, camera);
+  // ── Render ──────────────────────────────────────────────────────
+  renderer.render(worldScene, followCamera);
 
-  // Update mission beacon
-  const markerPos = missionSystem.getActiveMarkerPos();
-  updateMissionBeacon(markerPos, dt);
+  // Beacon
+  const mPos = missions.getActiveMarkerPos();
+  refreshBeacon(mPos, rawDt);
 
-  // HUD update
-  hud.update(gameState, dt);
+  // HUD
+  hud.update(runtime, rawDt);
   hud.setMuted(audio.isMuted());
 
-  // Update objective line with mission step text
-  const ms = missionSystem.getMissionState();
+  // Objective from mission step text
+  const ms = missions.getMissionState();
   if (ms && ms.active) {
     hud.setObjective(ms.stepText);
   }
 
-  // Show BUSTED overlay
-  const bustedOverlay = document.getElementById('busted-overlay');
-  if (bustedOverlay) {
-    bustedOverlay.style.display = gameState.busted ? 'flex' : 'none';
-  }
+  // Overlays
+  const bustedEl = document.getElementById('busted-overlay');
+  if (bustedEl) bustedEl.style.display = runtime.busted ? 'flex' : 'none';
 
-  // Show WASTED overlay
-  const wastedOverlay = document.getElementById('wasted-overlay');
-  if (wastedOverlay) {
-    wastedOverlay.style.display = gameState.wasted ? 'flex' : 'none';
-  }
+  const wastedEl = document.getElementById('wasted-overlay');
+  if (wastedEl) wastedEl.style.display = runtime.wasted ? 'flex' : 'none';
 
-  // Police nearby indicator
-  const policeNearbyEl = document.getElementById('police-nearby');
-  if (policeNearbyEl) {
-    const policePositions = policeSystem.getPolicePositions();
-    let nearPolice = false;
-    for (const pp of policePositions) {
-      const dx = pp.x - playerPos.x;
-      const dz = pp.z - playerPos.z;
+  // Police nearby warning
+  const polEl = document.getElementById('police-nearby');
+  if (polEl) {
+    const cops = police.getPolicePositions();
+    let nearCop = false;
+    for (const cp of cops) {
+      const dx = cp.x - trackerPos.x;
+      const dz = cp.z - trackerPos.z;
       if (Math.sqrt(dx * dx + dz * dz) < 50) {
-        nearPolice = true;
+        nearCop = true;
         break;
       }
     }
-    if (nearPolice && wantedSystem.getLevel() > 0) {
-      policeNearbyEl.textContent = '⚠ POLICE NEARBY';
-      policeNearbyEl.style.opacity = '1';
+    if (nearCop && wanted.getLevel() > 0) {
+      polEl.textContent = '⚠ POLICE NEARBY';
+      polEl.style.opacity = '1';
     } else {
-      policeNearbyEl.style.opacity = '0';
+      polEl.style.opacity = '0';
     }
   }
 
   // Minimap
-  const mapPos = gameState.mode === 'driving' && gameState.currentVehicle
-    ? { x: gameState.currentVehicle.position.x, z: gameState.currentVehicle.position.z, yaw: gameState.currentVehicle.yaw }
-    : { x: player.position.x, z: player.position.z, yaw: player.yaw };
-
-  const missionMarkers = missionSystem.getMissionMarkerPositions();
-  minimap.draw(mapPos, colliders,
-    trafficSystem.getTrafficCars(),
-    pedSystem.getPedestrians(),
-    vehicleSystem.parkedCars,
-    policeSystem.getPoliceCars(),
-    policeSystem.getOfficers(),
-    missionMarkers
+  const mapAnchor = runtime.travelMode === 'driving' && runtime.activeCar
+    ? runtime.activeCar
+    : playerState;
+  const mapPos = { x: mapAnchor.position.x, z: mapAnchor.position.z, yaw: mapAnchor.yaw };
+  const markers = missions.getMissionMarkerPositions();
+  minimap.draw(
+    mapPos, colliders,
+    traffic.getTrafficCars(),
+    walkers.getPedestrians(),
+    vehicles.parkedCars,
+    police.getPoliceCars(),
+    police.getOfficers(),
+    markers
   );
 }
 
-// ---- Resize handler ----
+/* ------------------------------------------------------------------ */
+/*  Resize                                                            */
+/* ------------------------------------------------------------------ */
+
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  followCamera.aspect = window.innerWidth / window.innerHeight;
+  followCamera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// ---- Start loop ----
-requestAnimationFrame(gameLoop);
+/* ------------------------------------------------------------------ */
+/*  Kick off                                                          */
+/* ------------------------------------------------------------------ */
 
-// ---- Debug handle ----
+requestAnimationFrame(tick);
+
 window.__game = {
-  gameState, player, scene, camera, renderer,
-  missionSystem, saveSystem, wantedSystem, combatSystem,
+  runtime,
+  player: playerState,
+  scene: worldScene,
+  camera: followCamera,
+  renderer,
+  missionSystem: missions,
+  saveSystem: persistence,
+  wantedSystem: wanted,
+  combatSystem: combat,
 };
 
-// Mark ready
 requestAnimationFrame(() => {
   document.title = 'Solar Coast — READY';
 });

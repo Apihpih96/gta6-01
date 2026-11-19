@@ -24,21 +24,26 @@ export function createMinimap(container) {
     ];
   }
 
+  /** Convert a palette colour number to a CSS hex string. */
+  function hexColor(num) {
+    return '#' + Math.max(0, Math.min(0xffffff, num)).toString(16).padStart(6, '0');
+  }
+
   /** Draw one frame of the minimap. */
   function draw(playerPos, colliders, trafficCars, pedestrians, parkedCars, policeCars, officers, missionMarkers) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Background (sand)
-    ctx.fillStyle = '#' + PALETTE.sand.toString(16).padStart(6, '0');
+    ctx.fillStyle = hexColor(PALETTE.sand);
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Water on right side
     const [waterX] = worldToMap(halfSize, 0);
-    ctx.fillStyle = '#' + PALETTE.sea.toString(16).padStart(6, '0');
+    ctx.fillStyle = hexColor(PALETTE.sea);
     ctx.fillRect(waterX, 0, canvas.width - waterX, canvas.height);
 
     // Roads as grey rectangles
-    ctx.fillStyle = '#' + PALETTE.road.toString(16).padStart(6, '0');
+    ctx.fillStyle = hexColor(PALETTE.road);
     const totalBlock = CITY.blockSize + CITY.roadWidth;
     for (let i = 0; i <= CITY.blocksPerAxis; i++) {
       const pos = -halfSize + i * totalBlock;
@@ -69,7 +74,7 @@ export function createMinimap(container) {
     if (trafficCars) {
       for (const car of trafficCars) {
         const [cx, cz] = worldToMap(car.position.x, car.position.z);
-        ctx.fillStyle = '#' + car.color.toString(16).padStart(6, '0');
+        ctx.fillStyle = hexColor(car.color);
         ctx.beginPath();
         ctx.arc(cx, cz, 2, 0, Math.PI * 2);
         ctx.fill();

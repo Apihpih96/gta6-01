@@ -170,6 +170,8 @@ export function createVehicleSystem(scene, seed, colliders, roadData) {
       if (car.occupied) continue;
       const dx = pos.x - car.position.x;
       const dz = pos.z - car.position.z;
+      // Squared-distance check first to avoid sqrt for far-away cars
+      if (dx * dx + dz * dz >= bestDist * bestDist) continue;
       const dist = Math.sqrt(dx * dx + dz * dz);
       if (dist < bestDist) {
         bestDist = dist;

@@ -1,433 +1,441 @@
 /**
- * Procedural sun-soaked coastal city built with three.js.
+ * Procedural city builder for Solar Coast.
  *
- * Deterministic from a seed. Uses InstancedMesh for buildings, palm trees,
- * and street lamps to keep draw calls low.
+ * Deterministic layout seeded from a number.  Uses InstancedMesh for
+ * buildings, vegetation and props to minimise draw calls.
  *
- * Features: downtown core (taller buildings near centre), beach props along
- * the ocean edge, height clusters, and dashed road markings.
+ * The city is organised as a grid of blocks separated by roads.  Buildings
+ * are taller near the centre (downtown) and shorter toward the suburbs.
+ * The +X edge is a sandy beach with ocean beyond.
+ *
+ * Returns { colliders, roadData } where:
+ *   colliders — array of { minX, maxX, minZ, maxZ } for collision tests
+ *   roadData  — array of { minX, maxX, minZ, maxZ, axis } for traffic routing
  */
 
 import * as THREE from 'three';
 import { CITY, PALETTE } from './config.js';
 import { createRNG, randInt, randFloat, randChoice } from './random.js';
 
-/** Create a canvas texture for building windows. */
-function makeWindowTexture(rng, width = 256, height = 512) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
+// ---------------------------------------------------------------------------
+// Texture generation
+// ---------------------------------------------------------------------------
 
-  const wallColor = randChoice(rng, PALETTE.buildingBase);
-  ctx.fillStyle = '#' + wallColor.toString(16).padStart(6, '0');
-  ctx.fillRect(0, 0, width, height);
+function bakeWindowTexture(rng, w = 192, h = 384) {
+  const cvs = document.createElement('canvas');
+  cvs.width = w;
+  cvs.height = h;
+  const ctx = cvs.getContext('2d');
 
-  const winW = 24;
-  const winH = 32;
-  const padX = 32;
-  const padY = 24;
-  const cols = Math.floor((width - padX * 2) / (winW + 8));
-  const rows = Math.floor((height - padY * 2) / (winH + 12));
-  const startX = (width - cols * (winW + 8) + 8) / 2;
+  const base = randChoice(rng, PALETTE.buildingBase);
+  ctx.fillStyle = '#' + base.toString(16).padStart(6, '0');
+  ctx.fillRect(0, 0, w, h);
 
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const x = startX + col * (winW + 8);
-      const y = padY + row * (winH + 12);
-      const lit = rng() > 0.3;
-      ctx.fillStyle = lit ? '#' + PALETTE.windowLit.toString(16).padStart(6, '0') : '#' + PALETTE.windowDark.toString(16).padStart(6, '0');
-      ctx.fillRect(x, y, winW, winH);
+  const cellW = 20;
+  const cellH = 28;
+  const gapX = 10;
+  const gapY = 14;
+  const marginX = 28;
+  const marginY = 20;
+  const cols = Math.floor((w - marginX * 2) / (cellW + gapX));
+  const rows = Math.floor((h - marginY * 2) / (cellH + gapY));
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = marginX + c * (cellW + gapX);
+      const y = marginY + r * (cellH + gapY);
+      ctx.fillStyle = rng() > 0.35
+        ? '#' + PALETTE.windowLit.toString(16).padStart(6, '0')
+        : '#' + PALETTE.windowDark.toString(16).padStart(6, '0');
+      ctx.fillRect(x, y, cellW, cellH);
     }
   }
 
-  const tex = new THREE.CanvasTexture(canvas);
+  const tex = new THREE.CanvasTexture(cvs);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.magFilter = THREE.NearestFilter;
   return tex;
 }
 
-/** Shared materials (created once, reused across instances). */
-let sharedMaterials = null;
+// ---------------------------------------------------------------------------
+// Shared materials (singleton)
+// ---------------------------------------------------------------------------
 
-function getSharedMaterials() {
-  if (sharedMaterials) return sharedMaterials;
-  sharedMaterials = {
-    building: new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.9 }),
-    road: new THREE.MeshStandardMaterial({ color: PALETTE.road, roughness: 0.95 }),
-    roadLine: new THREE.MeshStandardMaterial({ color: PALETTE.roadLine, roughness: 0.8 }),
-    sidewalk: new THREE.MeshStandardMaterial({ color: PALETTE.sidewalk, roughness: 0.9 }),
-    sand: new THREE.MeshStandardMaterial({ color: PALETTE.sand, roughness: 1.0 }),
-    sea: new THREE.MeshStandardMaterial({ color: PALETTE.sea, roughness: 0.3, metalness: 0.1 }),
-    palmTrunk: new THREE.MeshStandardMaterial({ color: PALETTE.palmTrunk, roughness: 0.9 }),
-    palmLeaf: new THREE.MeshStandardMaterial({ color: PALETTE.palmLeaf, roughness: 0.8 }),
-    lampPost: new THREE.MeshStandardMaterial({ color: PALETTE.lampPost, roughness: 0.5, metalness: 0.3 }),
-    lampLight: new THREE.MeshStandardMaterial({ color: PALETTE.lampLight, emissive: PALETTE.lampLight, emissiveIntensity: 0.5 }),
+let materials = null;
+
+function getMats() {
+  if (materials) return materials;
+  materials = {
+    road:      new THREE.MeshStandardMaterial({ color: PALETTE.road, roughness: 0.95 }),
+    roadMark:  new THREE.MeshStandardMaterial({ color: PALETTE.roadLine, roughness: 0.8 }),
+    sidewalk:  new THREE.MeshStandardMaterial({ color: PALETTE.sidewalk, roughness: 0.9 }),
+    sand:      new THREE.MeshStandardMaterial({ color: PALETTE.sand, roughness: 1 }),
+    water:     new THREE.MeshStandardMaterial({ color: PALETTE.sea, roughness: 0.3, metalness: 0.1 }),
+    trunk:     new THREE.MeshStandardMaterial({ color: PALETTE.palmTrunk, roughness: 0.9 }),
+    canopy:    new THREE.MeshStandardMaterial({ color: PALETTE.palmLeaf, roughness: 0.8 }),
+    lampPole:  new THREE.MeshStandardMaterial({ color: PALETTE.lampPost, roughness: 0.5, metalness: 0.3 }),
+    lampGlow:  new THREE.MeshStandardMaterial({ color: PALETTE.lampLight, emissive: PALETTE.lampLight, emissiveIntensity: 0.5 }),
   };
-  return sharedMaterials;
+  return materials;
 }
 
-/** Build the city scene. Returns { colliders, roadData }. */
+// ---------------------------------------------------------------------------
+// Height profile — downtown is taller
+// ---------------------------------------------------------------------------
+
+function downtownFactor(wx, wz, centre, radius) {
+  const dx = (wx - centre) / radius;
+  const dz = (wz - centre) / radius;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  // Gaussian: peak 1.7 at centre, fades to 0.4 at the edge
+  return 0.4 + 1.3 * Math.exp(-dist * dist * 2.2);
+}
+
+// ---------------------------------------------------------------------------
+// Main builder
+// ---------------------------------------------------------------------------
+
 export function buildCity(scene, seed) {
   const rng = createRNG(seed);
-  const mats = getSharedMaterials();
+  const mats = getMats();
   const { blocksPerAxis, blockSize, roadWidth, sidewalkWidth } = CITY;
-  const halfSize = blocksPerAxis * (blockSize + roadWidth) * 0.5;
-  const totalBlock = blockSize + roadWidth;
-  const centre = halfSize; // world centre of the grid
+  const halfExtent = blocksPerAxis * (blockSize + roadWidth) * 0.5;
+  const pitch = blockSize + roadWidth;
+  const gridCentre = halfExtent;
 
-  // ---- Sky gradient background ----
-  const skyCanvas = document.createElement('canvas');
-  skyCanvas.width = 512;
-  skyCanvas.height = 512;
-  const skyCtx = skyCanvas.getContext('2d');
-  const grad = skyCtx.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0, '#' + PALETTE.skyTop.toString(16).padStart(6, '0'));
-  grad.addColorStop(1, '#' + PALETTE.skyBottom.toString(16).padStart(6, '0'));
-  skyCtx.fillStyle = grad;
+  // ---- Sky ----
+  const skyCvs = document.createElement('canvas');
+  skyCvs.width = 512;
+  skyCvs.height = 512;
+  const skyCtx = skyCvs.getContext('2d');
+  const skyGrad = skyCtx.createLinearGradient(0, 0, 0, 512);
+  skyGrad.addColorStop(0, '#' + PALETTE.skyTop.toString(16).padStart(6, '0'));
+  skyGrad.addColorStop(1, '#' + PALETTE.skyBottom.toString(16).padStart(6, '0'));
+  skyCtx.fillStyle = skyGrad;
   skyCtx.fillRect(0, 0, 512, 512);
-  // Sun
+  // Sun disc
   skyCtx.fillStyle = '#' + PALETTE.sun.toString(16).padStart(6, '0');
   skyCtx.beginPath();
-  skyCtx.arc(380, 120, 40, 0, Math.PI * 2);
+  skyCtx.arc(390, 110, 38, 0, Math.PI * 2);
   skyCtx.fill();
-  // Clouds
-  skyCtx.fillStyle = 'rgba(255,255,255,0.3)';
-  for (let i = 0; i < 5; i++) {
-    const cx = randFloat(rng, 50, 460);
-    const cy = randFloat(rng, 30, 180);
+  // Wispy clouds
+  skyCtx.fillStyle = 'rgba(255,255,255,0.25)';
+  for (let i = 0; i < 6; i++) {
     skyCtx.beginPath();
-    skyCtx.ellipse(cx, cy, randFloat(rng, 30, 80), randFloat(rng, 10, 25), 0, 0, Math.PI * 2);
+    skyCtx.ellipse(
+      randFloat(rng, 40, 470), randFloat(rng, 25, 190),
+      randFloat(rng, 25, 70), randFloat(rng, 8, 22),
+      0, 0, Math.PI * 2
+    );
     skyCtx.fill();
   }
-  // Distant skyline silhouette
-  skyCtx.fillStyle = 'rgba(80,60,40,0.25)';
-  for (let x = 0; x < 512; x += 12) {
-    const h = randFloat(rng, 5, 40);
-    skyCtx.fillRect(x, 512 - h - 20, 10, h);
+  // Distant silhouette
+  skyCtx.fillStyle = 'rgba(70,50,30,0.2)';
+  for (let x = 0; x < 512; x += 10) {
+    const bh = randFloat(rng, 8, 45);
+    skyCtx.fillRect(x, 512 - bh - 15, 8, bh);
   }
-  const skyTex = new THREE.CanvasTexture(skyCanvas);
-  scene.background = skyTex;
+  scene.background = new THREE.CanvasTexture(skyCvs);
 
-  // ---- Lighting ----
-  const ambient = new THREE.AmbientLight(0xffeedd, 0.6);
-  scene.add(ambient);
+  // ---- Lights ----
+  scene.add(new THREE.AmbientLight(0xffeedd, 0.55));
+  const sunLight = new THREE.DirectionalLight(0xfff0c0, 1.15);
+  sunLight.position.set(55, 85, 35);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(1024, 1024);
+  sunLight.shadow.camera.left = -65;
+  sunLight.shadow.camera.right = 65;
+  sunLight.shadow.camera.top = 65;
+  sunLight.shadow.camera.bottom = -65;
+  sunLight.shadow.camera.near = 1;
+  sunLight.shadow.camera.far = 220;
+  scene.add(sunLight);
+  scene.add(new THREE.HemisphereLight(0x87ceeb, 0xc2b280, 0.35));
 
-  const sun = new THREE.DirectionalLight(0xfff0c0, 1.2);
-  sun.position.set(50, 80, 30);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.camera.left = -60;
-  sun.shadow.camera.right = 60;
-  sun.shadow.camera.top = 60;
-  sun.shadow.camera.bottom = -60;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 200;
-  scene.add(sun);
-
-  const hemi = new THREE.HemisphereLight(0x87ceeb, 0xc2b280, 0.4);
-  scene.add(hemi);
-
-  // ---- Ground plane (sand/beach base) ----
-  const groundGeo = new THREE.PlaneGeometry(halfSize * 4, halfSize * 4);
+  // ---- Ground ----
+  const groundGeo = new THREE.PlaneGeometry(halfExtent * 4, halfExtent * 4);
   const ground = new THREE.Mesh(groundGeo, mats.sand);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.05;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // ---- Sea plane on +X side ----
-  const seaGeo = new THREE.PlaneGeometry(halfSize * 2, halfSize * 3);
-  const sea = new THREE.Mesh(seaGeo, mats.sea);
+  // ---- Sea (east side) ----
+  const seaGeo = new THREE.PlaneGeometry(halfExtent * 2, halfExtent * 3);
+  const sea = new THREE.Mesh(seaGeo, mats.water);
   sea.rotation.x = -Math.PI / 2;
-  sea.position.set(halfSize + halfSize, -0.1, 0);
+  sea.position.set(halfExtent + halfExtent, -0.08, 0);
   scene.add(sea);
 
   // ---- Collision + road data ----
   const colliders = [];
   const roadData = [];
 
-  // Geometry caches
-  const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
-  buildingGeo.translate(0, 0.5, 0);
-  const palmTrunkGeo = new THREE.CylinderGeometry(0.15, 0.25, 1, 6);
-  palmTrunkGeo.translate(0, 0.5, 0);
-  const palmLeafGeo = new THREE.SphereGeometry(1, 6, 4);
-  const lampPostGeo = new THREE.CylinderGeometry(0.05, 0.08, 1, 4);
-  lampPostGeo.translate(0, 0.5, 0);
-  const lampLightGeo = new THREE.SphereGeometry(0.2, 6, 4);
-  const roadGeo = new THREE.PlaneGeometry(1, 1);
-  roadGeo.rotateX(-Math.PI / 2);
-  const roadLineGeo = new THREE.PlaneGeometry(1, 0.15);
-  roadLineGeo.rotateX(-Math.PI / 2);
-  const sidewalkGeo = new THREE.PlaneGeometry(1, 1);
-  sidewalkGeo.rotateX(-Math.PI / 2);
+  // Geometry singletons
+  const bldgGeo = new THREE.BoxGeometry(1, 1, 1);
+  bldgGeo.translate(0, 0.5, 0);
+  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.22, 1, 6);
+  trunkGeo.translate(0, 0.5, 0);
+  const canopyGeo = new THREE.SphereGeometry(1, 6, 4);
+  const poleGeo = new THREE.CylinderGeometry(0.04, 0.07, 1, 4);
+  poleGeo.translate(0, 0.5, 0);
+  const glowGeo = new THREE.SphereGeometry(0.18, 6, 4);
+  const roadPlane = new THREE.PlaneGeometry(1, 1);
+  roadPlane.rotateX(-Math.PI / 2);
+  const dashPlane = new THREE.PlaneGeometry(1, 0.12);
+  dashPlane.rotateX(-Math.PI / 2);
+  const swPlane = new THREE.PlaneGeometry(1, 1);
+  swPlane.rotateX(-Math.PI / 2);
 
+  // Mesh buckets
   const roadMeshes = [];
-  const sidewalkMeshes = [];
-  const roadLineMeshes = [];
+  const markMeshes = [];
+  const swMeshes = [];
 
-  // Instance buffers
-  const buildingMatrices = [];
-  const buildingColors = [];
-  const palmTrunkMatrices = [];
-  const palmLeafMatrices = [];
-  const lampMatrices = [];
-  const lampLightMatrices = [];
+  // Instance arrays
+  const bldgMatrixList = [];
+  const bldgColorList = [];
+  const trunkMatrixList = [];
+  const canopyMatrixList = [];
+  const poleMatrixList = [];
+  const glowMatrixList = [];
 
-  // Beach props (umbrellas, lounge chairs — placed later)
-  const beachUmbrellaGeo = new THREE.ConeGeometry(1.2, 0.8, 8);
-  const beachUmbrellaMat = new THREE.MeshStandardMaterial({ color: 0xff4444, roughness: 0.9 });
-  const beachUmbrellaPoleGeo = new THREE.CylinderGeometry(0.05, 0.05, 1, 4);
-  const beachUmbrellaPoleMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 });
-  const beachMeshes = [];
+  // Beach props
+  const umbrellaGeo = new THREE.ConeGeometry(1.1, 0.7, 8);
+  const umbrellaColors = [0xff4444, 0x44aa44, 0x4488ff, 0xffaa22];
+  const poleGeo2 = new THREE.CylinderGeometry(0.04, 0.04, 1, 4);
+  const beachItems = [];
 
-  // ---- Height profile: distance-based multiplier ----
-  // Downtown core: buildings near centre are taller, suburban edges are shorter
-  function heightMultiplier(wx, wz) {
-    const dx = (wx - centre) / halfSize;
-    const dz = (wz - centre) / halfSize;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    // Peak at centre (1.8x), falls to 0.5 at edges
-    return 0.5 + 1.3 * Math.exp(-dist * dist * 2);
-  }
+  // ---- Grid layout ----
+  for (let bi = 0; bi < blocksPerAxis; bi++) {
+    for (let bj = 0; bj < blocksPerAxis; bj++) {
+      const cx = -halfExtent + bi * pitch + pitch * 0.5;
+      const cz = -halfExtent + bj * pitch + pitch * 0.5;
 
-  // ---- Build grid ----
-  for (let bx = 0; bx < blocksPerAxis; bx++) {
-    for (let bz = 0; bz < blocksPerAxis; bz++) {
-      const cx = -halfSize + bx * totalBlock + totalBlock * 0.5;
-      const cz = -halfSize + bz * totalBlock + totalBlock * 0.5;
-
-      // Beach edge: skip buildings at max X
-      if (bx === blocksPerAxis - 1 && CITY.beachEdge) {
-        // Place beach props instead
-        const beachRng = createRNG(seed + bx * 9999 + bz * 7777);
+      // Beach strip on +X edge
+      if (bi === blocksPerAxis - 1 && CITY.beachEdge) {
+        const bRng = createRNG(seed + bi * 8888 + bj * 6666);
         for (let p = 0; p < 3; p++) {
-          const ux = cx + randFloat(beachRng, -blockSize / 2, blockSize / 2);
-          const uz = cz + randFloat(beachRng, -blockSize / 2, blockSize / 2);
-          // Umbrella pole
-          const pole = new THREE.Mesh(beachUmbrellaPoleGeo, beachUmbrellaPoleMat);
+          const ux = cx + randFloat(bRng, -blockSize * 0.4, blockSize * 0.4);
+          const uz = cz + randFloat(bRng, -blockSize * 0.4, blockSize * 0.4);
+          const pole = new THREE.Mesh(poleGeo2, new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.5 }));
           pole.position.set(ux, 0.5, uz);
-          beachMeshes.push(pole);
-          // Umbrella canopy
-          const canopy = new THREE.Mesh(beachUmbrellaGeo, beachUmbrellaMat.clone());
-          canopy.material.color = new THREE.Color(randChoice(beachRng, [0xff4444, 0x44aa44, 0x4488ff, 0xffaa22]));
-          canopy.position.set(ux, 1.4, uz);
-          beachMeshes.push(canopy);
+          beachItems.push(pole);
+          const canopy = new THREE.Mesh(umbrellaGeo, new THREE.MeshStandardMaterial({
+            color: randChoice(bRng, umbrellaColors), roughness: 0.9,
+          }));
+          canopy.position.set(ux, 1.35, uz);
+          beachItems.push(canopy);
         }
         continue;
       }
 
       // Road surfaces
-      const roadY = 0.02;
-      const roadZTop = cz - blockSize / 2 - roadWidth / 2;
-      const roadXLeft = cx - blockSize / 2 - roadWidth / 2;
+      const roadY = 0.015;
+      // Horizontal road (along X) at the top of this block
+      const hRoadZ = cz - blockSize / 2 - roadWidth / 2;
+      const hRoad = new THREE.Mesh(roadPlane, mats.road);
+      hRoad.position.set(cx, roadY, hRoadZ);
+      hRoad.scale.set(blockSize + roadWidth, 1, roadWidth);
+      hRoad.receiveShadow = true;
+      roadMeshes.push(hRoad);
 
-      // Road mesh for top edge (X-direction road)
-      const roadMeshTop = new THREE.Mesh(roadGeo, mats.road);
-      roadMeshTop.position.set(cx, roadY, roadZTop);
-      roadMeshTop.scale.set(blockSize + roadWidth, 1, roadWidth);
-      roadMeshTop.receiveShadow = true;
-      roadMeshes.push(roadMeshTop);
+      // Vertical road (along Z) at the left of this block
+      const vRoadX = cx - blockSize / 2 - roadWidth / 2;
+      const vRoad = new THREE.Mesh(roadPlane, mats.road);
+      vRoad.position.set(vRoadX, roadY, cz);
+      vRoad.scale.set(roadWidth, 1, blockSize + roadWidth);
+      vRoad.receiveShadow = true;
+      roadMeshes.push(vRoad);
 
-      // Road mesh for left edge (Z-direction road)
-      const roadMeshLeft = new THREE.Mesh(roadGeo, mats.road);
-      roadMeshLeft.position.set(roadXLeft, roadY, cz);
-      roadMeshLeft.scale.set(roadWidth, 1, blockSize + roadWidth);
-      roadMeshLeft.receiveShadow = true;
-      roadMeshes.push(roadMeshLeft);
-
-      // Lane markings
-      const numDashes = Math.floor(blockSize / 4);
+      // Dashed centre-line markings
+      const numDashes = Math.max(2, Math.floor(blockSize / 4));
       for (let d = 0; d < numDashes; d++) {
-        const dash = new THREE.Mesh(roadLineGeo, mats.roadLine);
-        dash.position.set(
-          cx - blockSize / 2 + (d + 0.5) * (blockSize / numDashes),
-          roadY + 0.01,
-          roadZTop
-        );
-        dash.scale.set(2, 1, 1);
-        roadLineMeshes.push(dash);
+        const frac = (d + 0.5) / numDashes;
+        const dx = new THREE.Mesh(dashPlane, mats.roadMark);
+        dx.position.set(cx - blockSize / 2 + frac * blockSize, roadY + 0.008, hRoadZ);
+        dx.scale.set(blockSize / numDashes * 0.55, 1, 1);
+        markMeshes.push(dx);
 
-        const dashV = new THREE.Mesh(roadLineGeo, mats.roadLine);
-        dashV.position.set(
-          roadXLeft,
-          roadY + 0.01,
-          cz - blockSize / 2 + (d + 0.5) * (blockSize / numDashes)
-        );
-        dashV.scale.set(1, 1, 2);
-        roadLineMeshes.push(dashV);
+        const dz = new THREE.Mesh(dashPlane, mats.roadMark);
+        dz.position.set(vRoadX, roadY + 0.008, cz - blockSize / 2 + frac * blockSize);
+        dz.scale.set(1, 1, blockSize / numDashes * 0.55);
+        markMeshes.push(dz);
       }
 
-      // Sidewalks
-      const swY = 0.06;
-      const swMesh = new THREE.Mesh(sidewalkGeo, mats.sidewalk);
-      swMesh.position.set(cx, swY, cz - blockSize / 2 - sidewalkWidth / 2);
+      // Sidewalks along the south edge
+      const swMesh = new THREE.Mesh(swPlane, mats.sidewalk);
+      swMesh.position.set(cx, 0.05, cz - blockSize / 2 - sidewalkWidth * 0.5);
       swMesh.scale.set(blockSize, 1, sidewalkWidth);
       swMesh.receiveShadow = true;
-      sidewalkMeshes.push(swMesh);
+      swMeshes.push(swMesh);
 
-      // Buildings on this block
-      const blockRng = createRNG(seed + bx * 1000 + bz);
-      const numBuildings = randInt(blockRng, 1, 3);
-      const bSpacing = blockSize / numBuildings;
+      // ---- Buildings on this block ----
+      const bRng2 = createRNG(seed + bi * 999 + bj * 333);
+      const numBldgs = randInt(bRng2, 1, 3);
+      const spacing = blockSize / numBldgs;
 
-      for (let b = 0; b < numBuildings; b++) {
-        const bWidth = randFloat(blockRng, bSpacing * 0.5, bSpacing * 0.85);
-        const bDepth = randFloat(blockRng, bSpacing * 0.5, bSpacing * 0.85);
-        const baseHeight = randFloat(blockRng, 6, 45);
-        const hMult = heightMultiplier(cx + (-blockSize / 2 + bSpacing * b + bSpacing * 0.5), cz);
-        // Clamp building height to avoid extreme towers at centre
-        const bHeight = Math.min(80, baseHeight * hMult);
-        const bOffX = -blockSize / 2 + sidewalkWidth + bSpacing * b + bSpacing * 0.5;
-        const bOffZ = -blockSize / 2 + sidewalkWidth + bSpacing * 0.5;
+      for (let b = 0; b < numBldgs; b++) {
+        const bW = randFloat(bRng2, spacing * 0.5, spacing * 0.8);
+        const bD = randFloat(bRng2, spacing * 0.5, spacing * 0.8);
+        const rawH = randFloat(bRng2, 8, 42);
+        const hFactor = downtownFactor(cx + (-blockSize / 2 + spacing * b + spacing * 0.5), cz, gridCentre, halfExtent);
+        const bH = Math.min(78, rawH * hFactor);
 
-        const worldX = cx + bOffX;
-        const worldZ = cz + bOffZ;
+        const localX = -blockSize / 2 + sidewalkWidth + spacing * b + spacing * 0.5;
+        const localZ = -blockSize / 2 + sidewalkWidth + spacing * 0.5;
+        const wx = cx + localX;
+        const wz = cz + localZ;
 
-        const mat = new THREE.Matrix4();
-        mat.makeTranslation(worldX, 0, worldZ);
-        mat.scale(new THREE.Vector3(bWidth, bHeight, bDepth));
-        buildingMatrices.push(mat);
+        const m = new THREE.Matrix4();
+        m.makeTranslation(wx, 0, wz);
+        m.scale(new THREE.Vector3(bW, bH, bD));
+        bldgMatrixList.push(m);
 
-        const wallColor = randChoice(blockRng, PALETTE.buildingBase);
-        buildingColors.push(wallColor);
+        const clr = randChoice(bRng2, PALETTE.buildingBase);
+        bldgColorList.push(clr);
 
         colliders.push({
-          minX: worldX - bWidth / 2,
-          maxX: worldX + bWidth / 2,
-          minZ: worldZ - bDepth / 2,
-          maxZ: worldZ + bDepth / 2,
+          minX: wx - bW / 2, maxX: wx + bW / 2,
+          minZ: wz - bD / 2, maxZ: wz + bD / 2,
         });
 
-        // Palm trees — placed near buildings, clamped to block interior (not on roads)
-        // Ensure palm is not inside the building footprint itself
-        if (blockRng() > 0.5) {
-          let palmX = worldX + randFloat(blockRng, bWidth * 0.5, bWidth * 0.8);
-          let palmZ = worldZ + randFloat(blockRng, -bDepth * 0.2, bDepth * 0.2);
-          // Clamp to block interior (2 units from edge to avoid road overlap)
-          const blockMinX = cx - blockSize / 2 + 2;
-          const blockMaxX = cx + blockSize / 2 - 2;
-          const blockMinZ = cz - blockSize / 2 + 2;
-          const blockMaxZ = cz + blockSize / 2 - 2;
-          palmX = Math.max(blockMinX, Math.min(blockMaxX, palmX));
-          palmZ = Math.max(blockMinZ, Math.min(blockMaxZ, palmZ));
-          // Keep palm outside building footprint (push to nearest edge if inside)
-          const palmHalfW = bWidth / 2 + 0.8;
-          const palmHalfD = bDepth / 2 + 0.8;
-          if (palmX > worldX - palmHalfW && palmX < worldX + palmHalfW &&
-              palmZ > worldZ - palmHalfD && palmZ < worldZ + palmHalfD) {
-            // Push palm to the right of the building
-            palmX = worldX + palmHalfW + 0.5;
-            palmX = Math.min(blockMaxX, palmX);
-          }
-          const palmH = randFloat(blockRng, 4, 7);
-          const pMat = new THREE.Matrix4();
-          pMat.makeTranslation(palmX, 0, palmZ);
-          pMat.scale(new THREE.Vector3(0.3, palmH, 0.3));
-          palmTrunkMatrices.push(pMat);
+        // Palm tree — positioned outside the building footprint
+        if (bRng2() > 0.45) {
+          let px = wx + randFloat(bRng2, bW * 0.55, bW * 0.85);
+          let pz = wz + randFloat(bRng2, -bD * 0.15, bD * 0.15);
 
-          const leafMat = new THREE.Matrix4();
-          leafMat.makeTranslation(palmX, palmH + 0.5, palmZ);
-          leafMat.scale(new THREE.Vector3(1.5, 0.6, 1.5));
-          palmLeafMatrices.push(leafMat);
+          // Clamp inside block
+          const loX = cx - blockSize / 2 + 2;
+          const hiX = cx + blockSize / 2 - 2;
+          const loZ = cz - blockSize / 2 + 2;
+          const hiZ = cz + blockSize / 2 - 2;
+          px = Math.max(loX, Math.min(hiX, px));
+          pz = Math.max(loZ, Math.min(hiZ, pz));
+
+          // Push outside building if overlapping
+          const margin = bW / 2 + 0.7;
+          if (px > wx - margin && px < wx + margin && pz > wz - margin && pz < wz + margin) {
+            px = wx + margin + 0.4;
+            px = Math.min(hiX, px);
+          }
+
+          const tH = randFloat(bRng2, 4.5, 6.5);
+          const tMat = new THREE.Matrix4();
+          tMat.makeTranslation(px, 0, pz);
+          tMat.scale(new THREE.Vector3(0.25, tH, 0.25));
+          trunkMatrixList.push(tMat);
+
+          const cMat = new THREE.Matrix4();
+          cMat.makeTranslation(px, tH + 0.4, pz);
+          cMat.scale(new THREE.Vector3(1.4, 0.5, 1.4));
+          canopyMatrixList.push(cMat);
         }
 
-        // Street lamps at block edges
-        if (b === 0 || b === numBuildings - 1) {
-          const lampX = worldX + (b === 0 ? -bWidth / 2 - 1 : bWidth / 2 + 1);
-          const lampZ = worldZ;
+        // Street lamps at block corners
+        if (b === 0 || b === numBldgs - 1) {
+          const lx = wx + (b === 0 ? -bW / 2 - 0.9 : bW / 2 + 0.9);
+          const lz = wz;
           const lMat = new THREE.Matrix4();
-          lMat.makeTranslation(lampX, 0, lampZ);
-          lMat.scale(new THREE.Vector3(0.2, 5, 0.2));
-          lampMatrices.push(lMat);
+          lMat.makeTranslation(lx, 0, lz);
+          lMat.scale(new THREE.Vector3(0.18, 4.8, 0.18));
+          poleMatrixList.push(lMat);
 
-          const llMat = new THREE.Matrix4();
-          llMat.makeTranslation(lampX, 5.2, lampZ);
-          llMat.scale(new THREE.Vector3(1, 1, 1));
-          lampLightMatrices.push(llMat);
+          const gMat = new THREE.Matrix4();
+          gMat.makeTranslation(lx, 5, lz);
+          gMat.scale(new THREE.Vector3(1, 1, 1));
+          glowMatrixList.push(gMat);
         }
       }
     }
   }
 
-  // ---- Instanced meshes ----
-  const colorGroups = {};
-  for (let i = 0; i < buildingMatrices.length; i++) {
-    const c = buildingColors[i];
-    if (!colorGroups[c]) colorGroups[c] = [];
-    colorGroups[c].push(buildingMatrices[i]);
+  // ---- Instanced buildings grouped by colour ----
+  const colourBuckets = {};
+  for (let i = 0; i < bldgMatrixList.length; i++) {
+    const c = bldgColorList[i];
+    if (!colourBuckets[c]) colourBuckets[c] = [];
+    colourBuckets[c].push(bldgMatrixList[i]);
   }
-
-  for (const [color, matrices] of Object.entries(colorGroups)) {
+  for (const [hex, matrixArr] of Object.entries(colourBuckets)) {
     const mat = new THREE.MeshStandardMaterial({
-      color: parseInt(color),
+      color: parseInt(hex),
       roughness: 0.85,
-      map: makeWindowTexture(createRNG(parseInt(color)), 128, 256),
+      map: bakeWindowTexture(createRNG(parseInt(hex)), 128, 256),
     });
-    const instanced = new THREE.InstancedMesh(buildingGeo, mat, matrices.length);
-    instanced.castShadow = true;
-    instanced.receiveShadow = true;
-    for (let i = 0; i < matrices.length; i++) {
-      instanced.setMatrixAt(i, matrices[i]);
-    }
-    instanced.instanceMatrix.needsUpdate = true;
-    scene.add(instanced);
+    const inst = new THREE.InstancedMesh(bldgGeo, mat, matrixArr.length);
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+    for (let i = 0; i < matrixArr.length; i++) inst.setMatrixAt(i, matrixArr[i]);
+    inst.instanceMatrix.needsUpdate = true;
+    scene.add(inst);
   }
 
-  if (palmTrunkMatrices.length > 0) {
-    const trunkInstanced = new THREE.InstancedMesh(palmTrunkGeo, mats.palmTrunk, palmTrunkMatrices.length);
-    trunkInstanced.castShadow = true;
-    for (let i = 0; i < palmTrunkMatrices.length; i++) {
-      trunkInstanced.setMatrixAt(i, palmTrunkMatrices[i]);
-    }
-    trunkInstanced.instanceMatrix.needsUpdate = true;
-    scene.add(trunkInstanced);
+  // ---- Instanced palms ----
+  if (trunkMatrixList.length > 0) {
+    const trInst = new THREE.InstancedMesh(trunkGeo, mats.trunk, trunkMatrixList.length);
+    trInst.castShadow = true;
+    for (let i = 0; i < trunkMatrixList.length; i++) trInst.setMatrixAt(i, trunkMatrixList[i]);
+    trInst.instanceMatrix.needsUpdate = true;
+    scene.add(trInst);
 
-    const leafInstanced = new THREE.InstancedMesh(palmLeafGeo, mats.palmLeaf, palmLeafMatrices.length);
-    leafInstanced.castShadow = true;
-    for (let i = 0; i < palmLeafMatrices.length; i++) {
-      leafInstanced.setMatrixAt(i, palmLeafMatrices[i]);
-    }
-    leafInstanced.instanceMatrix.needsUpdate = true;
-    scene.add(leafInstanced);
+    const cInst = new THREE.InstancedMesh(canopyGeo, mats.canopy, canopyMatrixList.length);
+    cInst.castShadow = true;
+    for (let i = 0; i < canopyMatrixList.length; i++) cInst.setMatrixAt(i, canopyMatrixList[i]);
+    cInst.instanceMatrix.needsUpdate = true;
+    scene.add(cInst);
   }
 
-  if (lampMatrices.length > 0) {
-    const lampInstanced = new THREE.InstancedMesh(lampPostGeo, mats.lampPost, lampMatrices.length);
-    lampInstanced.castShadow = true;
-    for (let i = 0; i < lampMatrices.length; i++) {
-      lampInstanced.setMatrixAt(i, lampMatrices[i]);
-    }
-    lampInstanced.instanceMatrix.needsUpdate = true;
-    scene.add(lampInstanced);
+  // ---- Instanced lamps ----
+  if (poleMatrixList.length > 0) {
+    const pInst = new THREE.InstancedMesh(poleGeo, mats.lampPole, poleMatrixList.length);
+    pInst.castShadow = true;
+    for (let i = 0; i < poleMatrixList.length; i++) pInst.setMatrixAt(i, poleMatrixList[i]);
+    pInst.instanceMatrix.needsUpdate = true;
+    scene.add(pInst);
 
-    const lampLightInstanced = new THREE.InstancedMesh(lampLightGeo, mats.lampLight, lampLightMatrices.length);
-    for (let i = 0; i < lampLightMatrices.length; i++) {
-      lampLightInstanced.setMatrixAt(i, lampLightMatrices[i]);
-    }
-    lampLightInstanced.instanceMatrix.needsUpdate = true;
-    scene.add(lampLightInstanced);
+    const gInst = new THREE.InstancedMesh(glowGeo, mats.lampGlow, glowMatrixList.length);
+    for (let i = 0; i < glowMatrixList.length; i++) gInst.setMatrixAt(i, glowMatrixList[i]);
+    gInst.instanceMatrix.needsUpdate = true;
+    scene.add(gInst);
   }
 
-  // Beach props
-  for (const m of beachMeshes) scene.add(m);
+  // Beach items
+  for (const item of beachItems) scene.add(item);
 
-  // Road and sidewalk meshes
+  // Roads, markings, sidewalks
   for (const m of roadMeshes) scene.add(m);
-  for (const m of roadLineMeshes) scene.add(m);
-  for (const m of sidewalkMeshes) scene.add(m);
+  for (const m of markMeshes) scene.add(m);
+  for (const m of swMeshes) scene.add(m);
 
-  // Road data for traffic AI
-  for (let bx = 0; bx < blocksPerAxis; bx++) {
-    for (let bz = 0; bz < blocksPerAxis; bz++) {
-      const cx = -halfSize + bx * totalBlock + totalBlock * 0.5;
-      const cz = -halfSize + bz * totalBlock + totalBlock * 0.5;
+  // ---- Road data for traffic AI ----
+  for (let bi = 0; bi < blocksPerAxis; bi++) {
+    for (let bj = 0; bj < blocksPerAxis; bj++) {
+      const cx = -halfExtent + bi * pitch + pitch * 0.5;
+      const cz = -halfExtent + bj * pitch + pitch * 0.5;
       roadData.push(
-        { minX: cx - blockSize / 2 - roadWidth / 2, maxX: cx + blockSize / 2 + roadWidth / 2, minZ: cz - blockSize / 2 - roadWidth / 2, maxZ: cz - blockSize / 2 + roadWidth / 2, axis: 'x' },
-        { minX: cx - blockSize / 2 - roadWidth / 2, maxX: cx - blockSize / 2 + roadWidth / 2, minZ: cz - blockSize / 2 - roadWidth / 2, maxZ: cz + blockSize / 2 + roadWidth / 2, axis: 'z' },
+        {
+          minX: cx - blockSize / 2 - roadWidth / 2,
+          maxX: cx + blockSize / 2 + roadWidth / 2,
+          minZ: cz - blockSize / 2 - roadWidth / 2,
+          maxZ: cz - blockSize / 2 + roadWidth / 2,
+          axis: 'x',
+        },
+        {
+          minX: cx - blockSize / 2 - roadWidth / 2,
+          maxX: cx - blockSize / 2 + roadWidth / 2,
+          minZ: cz - blockSize / 2 - roadWidth / 2,
+          maxZ: cz + blockSize / 2 + roadWidth / 2,
+          axis: 'z',
+        },
       );
     }
+  }
+
+  // Sanity check: every road segment must have non-zero extent
+  for (const r of roadData) {
+    if (r.axis === 'x' && r.maxX <= r.minX) { r.maxX = r.minX + 1; }
+    if (r.axis === 'z' && r.maxZ <= r.minZ) { r.maxZ = r.minZ + 1; }
   }
 
   return { colliders, roadData };

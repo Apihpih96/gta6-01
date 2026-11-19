@@ -186,11 +186,14 @@ export function createPlayer(scene, cityColliders) {
     }
 
     const { leftArm, rightArm, leftLeg, rightLeg } = mesh.userData;
-    const swing = Math.sin(state.walkCycle) * 0.5;
-    leftArm.rotation.x = swing;
-    rightArm.rotation.x = -swing;
-    leftLeg.rotation.x = -swing;
-    rightLeg.rotation.x = swing;
+    // Guard against meshes that lack animation joints (e.g. custom replacements)
+    if (leftArm) {
+      const swing = Math.sin(state.walkCycle) * 0.5;
+      leftArm.rotation.x = swing;
+      rightArm.rotation.x = -swing;
+      leftLeg.rotation.x = -swing;
+      rightLeg.rotation.x = swing;
+    }
 
     mesh.position.copy(state.position);
     mesh.rotation.y = isMoving ? Math.atan2(moveDir.x, moveDir.z) : state.yaw;

@@ -5,7 +5,7 @@
  * mission banners and briefing panels.
  */
 
-import { OBJECTIVE_DEFAULT } from './config.js';
+import { OBJECTIVE_DEFAULT, START_CASH } from './config.js';
 
 /** Grab references to all HUD elements and wire up buttons. */
 export function createHUD() {
@@ -223,7 +223,7 @@ export function createHUD() {
       const btn = document.createElement('button');
       btn.dataset.missionIdx = String(idx);
       btn.className = completedIds.has(def.id) ? 'mission-btn completed' : 'mission-btn';
-      btn.textContent = def.name;
+      btn.textContent = def.title;
       if (completedIds.has(def.id)) {
         btn.title = 'Completed ✓';
         btn.disabled = true;

@@ -1,381 +1,364 @@
 /**
- * Audio engine: WebAudio synthesis for Solar Coast.
+ * Solar Coast audio engine — WebAudio synthesised sounds and music.
  *
- * All sounds are synthesised with oscillators and noise — no audio files,
- * no downloads, zero network requests.  Created lazily on the first user
- * gesture so browsers allow AudioContext.
+ * Zero external files.  All oscillators, noise, and filters are created
+ * at runtime and only activated after a user gesture (browser policy).
  *
- * Exports:
- *   createAudioEngine() — returns { init, play, startMusic, stopMusic,
- *       isMuted, setMuted, getContext }
- *
- * Sound catalogue (all original):
- *   engine        — engine hum, oscillator pitch follows speed
- *   siren         — two-tone police wail
- *   punch         — low thud
- *   pedYelp       — short filtered blip
- *   carDoor       — enter/exit blip
- *   crash         — collision thump
- *   cash          — cha-ching two-note chime
- *   missionOk     — 4-note completion jingle
- *   missionFail   — low buzz
- *   bustedSting   — BUSTED sting
- *   wastedSting   — WASTED sting
- *   uiClick       — UI button blip
+ * Public shape returned by createAudioEngine():
+ *   { init, play, startEngine, updateEngine, stopEngine,
+ *     startMusic, stopMusic, isMuted, setMuted, getContext, isInitialised }
  */
 
+import * as THREE from 'three';
+
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Module-level state
+// ---------------------------------------------------------------------------
+let audioCtx = null;
+let masterBus = null;
+let musicBus = null;
+let sfxBus = null;
+let muted = false;
+let ready = false;
+
+// Siren state
+let sirenOsc = null;
+let sirenLfo = null;
+
+// Engine hum state
+let engineOsc = null;
+let engineGain = null;
+
+// Background music state
+let musicRunning = false;
+let musicOsc = null;
+let musicGainNode = null;
+let musicHatSrc = null;
+let musicScheduleTime = 0;
+let musicNoteIdx = 0;
+
+// ---------------------------------------------------------------------------
+// Context bootstrap
 // ---------------------------------------------------------------------------
 
-let _ctx = null;
-let _masterGain = null;
-let _musicGain = null;
-let _sfxGain = null;
-let _muted = false;
-let _initialised = false;
-let _musicNodes = null;
-let _musicPlaying = false;
-let _sirenNodes = null;
+function ensureAudioContext() {
+  if (audioCtx) return audioCtx;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return null;
+  audioCtx = new Ctor();
 
-/** Ensure AudioContext + master gain exist (called on first gesture). */
-function ensureCtx() {
-  if (_ctx) return _ctx;
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  _ctx = new AC();
-  _masterGain = _ctx.createGain();
-  _masterGain.gain.value = _muted ? 0 : 1;
-  _masterGain.connect(_ctx.destination);
+  masterBus = audioCtx.createGain();
+  masterBus.gain.value = muted ? 0 : 1;
+  masterBus.connect(audioCtx.destination);
 
-  _musicGain = _ctx.createGain();
-  _musicGain.gain.value = 0.18;
-  _musicGain.connect(_masterGain);
+  musicBus = audioCtx.createGain();
+  musicBus.gain.value = 0.15;
+  musicBus.connect(masterBus);
 
-  _sfxGain = _ctx.createGain();
-  _sfxGain.gain.value = 0.6;
-  _sfxGain.connect(_masterGain);
+  sfxBus = audioCtx.createGain();
+  sfxBus.gain.value = 0.55;
+  sfxBus.connect(masterBus);
 
-  return _ctx;
+  return audioCtx;
 }
 
-/** Short noise burst — used for percussion / impacts. */
-function noiseBurst(duration, filterFreq, gainVal) {
-  if (!ensureCtx()) return;
-  const len = Math.max(64, Math.ceil(_ctx.sampleRate * duration));
-  const buf = _ctx.createBuffer(1, len, _ctx.sampleRate);
+// ---------------------------------------------------------------------------
+// Primitive synthesiser helpers
+// ---------------------------------------------------------------------------
+
+/** Short noise burst through a low-pass filter — impacts and crashes. */
+function emitNoise(lengthSec, cutoffHz, peakVol) {
+  if (!audioCtx) return;
+  const sampleCount = Math.max(64, Math.ceil(audioCtx.sampleRate * lengthSec));
+  const buf = audioCtx.createBuffer(1, sampleCount, audioCtx.sampleRate);
   const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-  const src = _ctx.createBufferSource();
+  for (let i = 0; i < sampleCount; i++) data[i] = Math.random() * 2 - 1;
+
+  const src = audioCtx.createBufferSource();
   src.buffer = buf;
-  const filt = _ctx.createBiquadFilter();
+
+  const filt = audioCtx.createBiquadFilter();
   filt.type = 'lowpass';
-  filt.frequency.value = filterFreq;
-  const g = _ctx.createGain();
-  // Clamp gain to avoid clipping through master bus
-  const clampedGain = Math.min(1, Math.max(0.001, gainVal));
-  g.gain.setValueAtTime(clampedGain, _ctx.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, _ctx.currentTime + duration);
-  src.connect(filt).connect(g).connect(_sfxGain);
+  filt.frequency.value = cutoffHz;
+
+  const env = audioCtx.createGain();
+  const safeVol = Math.min(0.8, Math.max(0.001, peakVol));
+  env.gain.setValueAtTime(safeVol, audioCtx.currentTime);
+  env.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + lengthSec);
+
+  src.connect(filt).connect(env).connect(sfxBus);
   src.start();
-  src.stop(_ctx.currentTime + duration + 0.01);
+  src.stop(audioCtx.currentTime + lengthSec + 0.02);
 }
 
-/** Simple oscillator tone. */
-function tone(freq, duration, type, gainVal, detune) {
-  if (!ensureCtx()) return;
-  const o = _ctx.createOscillator();
-  o.type = type || 'sine';
-  o.frequency.value = freq;
-  if (detune) o.detune.value = detune;
-  const g = _ctx.createGain();
-  // Clamp gain to prevent pops from excessive volume
-  const clampedGain = Math.min(0.5, Math.max(0.001, gainVal || 0.3));
-  g.gain.setValueAtTime(clampedGain, _ctx.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, _ctx.currentTime + duration);
-  o.connect(g).connect(_sfxGain);
-  o.start();
-  o.stop(_ctx.currentTime + duration + 0.01);
+/** Single oscillator tone with exponential decay envelope. */
+function emitTone(freqHz, durationSec, waveType, peakVol) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = waveType || 'sine';
+  osc.frequency.value = freqHz;
+
+  const env = audioCtx.createGain();
+  const safeVol = Math.min(0.4, Math.max(0.001, peakVol || 0.25));
+  env.gain.setValueAtTime(safeVol, audioCtx.currentTime);
+  env.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + durationSec);
+
+  osc.connect(env).connect(sfxBus);
+  osc.start();
+  osc.stop(audioCtx.currentTime + durationSec + 0.02);
 }
 
-/** Two-note chime (ascending). */
-function chime(f1, f2, duration, gainVal) {
-  if (!ensureCtx()) return;
-  tone(f1, duration * 0.6, 'sine', gainVal || 0.25);
-  setTimeout(() => tone(f2, duration * 0.5, 'sine', gainVal || 0.25), duration * 200);
+/** Two-tone ascending chime. */
+function emitChime(highFreq, lowFreq, dur, vol) {
+  if (!audioCtx) return;
+  emitTone(lowFreq, dur * 0.55, 'sine', vol || 0.22);
+  setTimeout(() => emitTone(highFreq, dur * 0.45, 'sine', vol || 0.22), dur * 180);
 }
 
 // ---------------------------------------------------------------------------
-// Music: quiet looping groove (~100 BPM) — bass line + noise hats
+// Individual sounds (mapped by name)
 // ---------------------------------------------------------------------------
 
-const BPM = 100;
-const BEAT = 60 / BPM; // 0.6 s per beat
-const BAR = BEAT * 4;  // 2.4 s per bar
-// Original bass melody (C minor-ish): 8 eighth-notes, clearly not any known song
-const BASS_NOTES = [65.41, 65.41, 77.78, 77.78, 87.31, 87.31, 98.00, 87.31]; // C2, Eb2, F2, G2, F2
+const soundMap = {
+  punch() {
+    emitNoise(0.1, 350, 0.45);
+    emitTone(85, 0.09, 'sine', 0.28);
+  },
+  pedYelp() {
+    emitTone(880, 0.12, 'square', 0.1);
+  },
+  carDoor() {
+    emitTone(420, 0.07, 'sine', 0.18);
+    setTimeout(() => emitTone(500, 0.05, 'sine', 0.14), 55);
+  },
+  crash() {
+    emitNoise(0.18, 450, 0.55);
+    emitTone(65, 0.14, 'sine', 0.35);
+  },
+  cash() {
+    emitChime(1175, 880, 0.22, 0.28);
+  },
+  missionOk() {
+    // Original ascending arpeggio: C5 → E5 → G5 → C6
+    if (!audioCtx) return;
+    emitTone(523.25, 0.18, 'sine', 0.22);
+    setTimeout(() => emitTone(659.25, 0.18, 'sine', 0.22), 140);
+    setTimeout(() => emitTone(783.99, 0.18, 'sine', 0.22), 280);
+    setTimeout(() => emitTone(1046.5, 0.3, 'sine', 0.28), 420);
+  },
+  missionFail() {
+    emitTone(155, 0.45, 'sawtooth', 0.18);
+  },
+  bustedSting() {
+    if (!audioCtx) return;
+    emitTone(210, 0.5, 'square', 0.22);
+    setTimeout(() => emitTone(155, 0.7, 'square', 0.28), 180);
+  },
+  wastedSting() {
+    if (!audioCtx) return;
+    emitTone(290, 0.25, 'sawtooth', 0.28);
+    setTimeout(() => emitTone(195, 0.25, 'sawtooth', 0.28), 140);
+    setTimeout(() => emitTone(105, 0.7, 'sawtooth', 0.32), 280);
+  },
+  uiClick() {
+    emitTone(640, 0.035, 'sine', 0.12);
+  },
+};
 
-function _startMusicLoop() {
-  if (!_ctx || _musicPlaying) return;
-  _musicPlaying = true;
+// ---------------------------------------------------------------------------
+// Engine hum (continuous while driving)
+// ---------------------------------------------------------------------------
+
+function igniteEngine() {
+  if (!audioCtx || muted || engineOsc) return;
+  engineOsc = audioCtx.createOscillator();
+  engineOsc.type = 'sawtooth';
+  engineOsc.frequency.value = 58;
+  engineGain = audioCtx.createGain();
+  engineGain.gain.value = 0;
+  engineOsc.connect(engineGain).connect(sfxBus);
+  engineOsc.start();
+}
+
+function tuneEngine(normalisedSpeed) {
+  if (!engineOsc || !audioCtx) return;
+  const sn = Math.max(0, Math.min(1, normalisedSpeed));
+  const t = audioCtx.currentTime;
+  const pitch = 55 + sn * 175;
+  const vol = 0.035 + sn * 0.075;
+  engineOsc.frequency.setTargetAtTime(pitch, t, 0.04);
+  engineGain.gain.setTargetAtTime(vol, t, 0.04);
+}
+
+function killEngine() {
+  if (engineOsc) {
+    try { engineOsc.stop(); } catch (_) { /* already stopped */ }
+    engineOsc = null;
+    engineGain = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Siren (two-tone wail that ducks music volume)
+// ---------------------------------------------------------------------------
+
+function igniteSiren() {
+  if (!audioCtx || sirenOsc) return;
+
+  sirenOsc = audioCtx.createOscillator();
+  sirenOsc.type = 'sawtooth';
+  sirenOsc.frequency.value = 510;
+
+  const sirenVol = audioCtx.createGain();
+  sirenVol.gain.value = 0.07;
+
+  sirenLfo = audioCtx.createOscillator();
+  sirenLfo.frequency.value = 1.1;
+  const lfoDepth = audioCtx.createGain();
+  lfoDepth.gain.value = 110;
+  sirenLfo.connect(lfoDepth).connect(sirenOsc.frequency);
+
+  // Duck the music while siren is active
+  if (musicBus) {
+    musicBus.gain.setTargetAtTime(0.05, audioCtx.currentTime, 0.25);
+  }
+
+  sirenOsc.connect(sirenVol).connect(sfxBus);
+  sirenOsc.start();
+  sirenLfo.start();
+}
+
+function killSiren() {
+  if (!sirenOsc) return;
+  try { sirenOsc.stop(); sirenLfo.stop(); } catch (_) {}
+  sirenOsc = null;
+  sirenLfo = null;
+
+  if (musicBus) {
+    musicBus.gain.setTargetAtTime(0.15, audioCtx.currentTime, 0.4);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Background music loop (~96 BPM, C minor-ish bass + noise hats)
+// ---------------------------------------------------------------------------
+
+const MUSIC_BPM = 96;
+const BEAT_SEC = 60 / MUSIC_BPM;
+const BAR_SEC = BEAT_SEC * 4;
+// Original 8-note bass pattern (eighth-notes)
+const BASS_SEQ = [65.41, 77.78, 65.41, 87.31, 77.78, 98.00, 87.31, 77.78];
+
+function startGroove() {
+  if (!audioCtx || musicRunning) return;
+  musicRunning = true;
 
   // Bass oscillator
-  const bassOsc = _ctx.createOscillator();
-  bassOsc.type = 'triangle';
-  const bassGain = _ctx.createGain();
-  bassGain.gain.value = 0;
-  bassOsc.connect(bassGain).connect(_musicGain);
+  musicOsc = audioCtx.createOscillator();
+  musicOsc.type = 'triangle';
+  musicGainNode = audioCtx.createGain();
+  musicGainNode.gain.value = 0;
+  musicOsc.connect(musicGainNode).connect(musicBus);
 
-  // Noise hi-hats
-  const hatLen = Math.ceil(_ctx.sampleRate * BAR * 4); // 4 bars of hat noise
-  const hatBuf = _ctx.createBuffer(1, hatLen, _ctx.sampleRate);
+  // Hi-hat: looped noise buffer
+  const hatLen = Math.ceil(audioCtx.sampleRate * BAR_SEC * 4);
+  const hatBuf = audioCtx.createBuffer(1, hatLen, audioCtx.sampleRate);
   const hatData = hatBuf.getChannelData(0);
   for (let i = 0; i < hatLen; i++) hatData[i] = Math.random() * 2 - 1;
-  const hatSrc = _ctx.createBufferSource();
-  hatSrc.buffer = hatBuf;
-  hatSrc.loop = true;
-  const hatFilt = _ctx.createBiquadFilter();
+  musicHatSrc = audioCtx.createBufferSource();
+  musicHatSrc.buffer = hatBuf;
+  musicHatSrc.loop = true;
+  const hatFilt = audioCtx.createBiquadFilter();
   hatFilt.type = 'highpass';
-  hatFilt.frequency.value = 8000;
-  const hatGain = _ctx.createGain();
-  hatGain.gain.value = 0.06;
-  hatSrc.connect(hatFilt).connect(hatGain).connect(_musicGain);
+  hatFilt.frequency.value = 7500;
+  const hatVol = audioCtx.createGain();
+  hatVol.gain.value = 0.055;
+  musicHatSrc.connect(hatFilt).connect(hatVol).connect(musicBus);
 
-  // Schedule bass notes (eighth-notes, looping 8 notes = 1 bar)
-  function scheduleBassBar(startTime) {
-    for (let i = 0; i < BASS_NOTES.length; i++) {
-      const t = startTime + i * (BEAT / 2);
-      bassOsc.frequency.setValueAtTime(BASS_NOTES[i], t);
-      bassGain.gain.setValueAtTime(0.35, t);
-      bassGain.gain.exponentialRampToValueAtTime(0.001, t + BEAT * 0.4);
-    }
-  }
+  musicOsc.start();
+  musicHatSrc.start();
 
-  // Pre-schedule 4 bars, then keep extending
-  let nextBarTime = _ctx.currentTime;
-  function extendBass() {
-    scheduleBassBar(nextBarTime);
-    nextBarTime += BAR;
-    if (_musicPlaying) _ctx.setTimeout(extendBass, BAR * 1000 * 0.75);
-  }
-
-  bassOsc.start();
-  hatSrc.start();
-  extendBass();
-
-  _musicNodes = { bassOsc, bassGain, hatSrc, hatGain, hatFilt };
+  musicScheduleTime = audioCtx.currentTime;
+  musicNoteIdx = 0;
+  scheduleBassAhead();
 }
 
-function _stopMusic() {
-  if (!_musicNodes) return;
-  try {
-    _musicNodes.bassOsc.stop();
-    _musicNodes.hatSrc.stop();
-  } catch (_e) { /* already stopped */ }
-  _musicNodes = null;
-  _musicPlaying = false;
+/** Pre-schedule one bar of bass notes, then re-schedule via timeout. */
+function scheduleBassAhead() {
+  for (let i = 0; i < BASS_SEQ.length; i++) {
+    const t = musicScheduleTime + i * (BEAT_SEC / 2);
+    musicOsc.frequency.setValueAtTime(BASS_SEQ[i], t);
+    musicGainNode.gain.setValueAtTime(0.32, t);
+    musicGainNode.gain.exponentialRampToValueAtTime(0.001, t + BEAT_SEC * 0.38);
+  }
+  musicScheduleTime += BAR_SEC;
+  musicNoteIdx = (musicNoteIdx + 1) % 4;
+  if (musicRunning) {
+    setTimeout(scheduleBassAhead, BAR_SEC * 700);
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Siren: two-tone wail that ducks music
-// ---------------------------------------------------------------------------
-
-function _startSiren() {
-  if (!_ctx || _sirenNodes) return;
-  const o = _ctx.createOscillator();
-  o.type = 'sawtooth';
-  const g = _ctx.createGain();
-  g.gain.value = 0.08;
-
-  // LFO to sweep between two frequencies
-  const lfo = _ctx.createOscillator();
-  lfo.frequency.value = 1.2; // wail speed
-  const lfoGain = _ctx.createGain();
-  lfoGain.gain.value = 120;  // sweep range
-  lfo.connect(lfoGain).connect(o.frequency);
-  o.frequency.value = 520;   // centre
-
-  // Duck music while siren is on
-  if (_musicGain) {
-    _musicGain.gain.setTargetAtTime(0.06, _ctx.currentTime, 0.3);
-  }
-
-  o.connect(g).connect(_sfxGain);
-  o.start();
-  lfo.start();
-  _sirenNodes = { o, lfo, g };
-}
-
-function _stopSiren() {
-  if (!_sirenNodes) return;
-  try {
-    _sirenNodes.o.stop();
-    _sirenNodes.lfo.stop();
-  } catch (_e) { /* already stopped */ }
-  _sirenNodes = null;
-  if (_musicGain) {
-    _musicGain.gain.setTargetAtTime(0.18, _ctx.currentTime, 0.5);
-  }
+function stopGroove() {
+  if (!musicOsc) return;
+  try { musicOsc.stop(); musicHatSrc.stop(); } catch (_) {}
+  musicOsc = null;
+  musicGainNode = null;
+  musicHatSrc = null;
+  musicRunning = false;
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Call once on first user gesture (start button click / keypress). */
+/** Must be called from a user gesture (click / keypress). */
 export function init() {
-  if (_initialised) return;
-  const ctx = ensureCtx();
-  if (!ctx) return; // AudioContext not supported
-  // Resume may reject if the browser still considers it a non-gesture context
-  ctx.resume().catch(() => { /* will retry on next gesture */ });
-  _initialised = true;
-  // Start title-screen ambient music
-  _startMusicLoop();
+  if (ready) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  ctx.resume().catch(() => {});
+  ready = true;
+  startGroove();
 }
 
 /**
- * Play a named sound.  Extra `opts` are sound-specific:
- *   audio.play('engine', { speed: 0.8 })  — speed 0..1 maps to pitch
- *   audio.play('siren', { on: true })     — start/stop siren
+ * Play a named sound.  Optional `opts` object for sound-specific params:
+ *   play('siren', { on: true })   — toggle siren on/off
  */
 export function play(name, opts) {
-  if (!_initialised) return;
-  if (_muted) return;
+  if (!ready || muted) return;
 
-  switch (name) {
-    case 'engine': {
-      // Continuous hum — handled externally via start/stop engine
-      return;
-    }
-    case 'siren': {
-      if (opts && opts.on) _startSiren(); else _stopSiren();
-      return;
-    }
-    case 'punch':
-      noiseBurst(0.12, 300, 0.5);
-      tone(80, 0.1, 'sine', 0.3);
-      return;
-    case 'pedYelp':
-      tone(900, 0.15, 'square', 0.12);
-      return;
-    case 'carDoor':
-      tone(440, 0.08, 'sine', 0.2);
-      setTimeout(() => tone(520, 0.06, 'sine', 0.15), 60);
-      return;
-    case 'crash':
-      noiseBurst(0.2, 500, 0.6);
-      tone(60, 0.15, 'sine', 0.4);
-      return;
-    case 'cash':
-      chime(880, 1175, 0.25, 0.3);
-      return;
-    case 'missionOk':
-      // Original 4-note: C5 E5 G5 C6
-      if (!ensureCtx()) return;
-      tone(523.25, 0.2, 'sine', 0.25);
-      setTimeout(() => tone(659.25, 0.2, 'sine', 0.25), 150);
-      setTimeout(() => tone(783.99, 0.2, 'sine', 0.25), 300);
-      setTimeout(() => tone(1046.5, 0.35, 'sine', 0.3), 450);
-      return;
-    case 'missionFail':
-      tone(150, 0.5, 'sawtooth', 0.2);
-      return;
-    case 'bustedSting':
-      if (!ensureCtx()) return;
-      tone(200, 0.6, 'square', 0.25);
-      setTimeout(() => tone(150, 0.8, 'square', 0.3), 200);
-      return;
-    case 'wastedSting':
-      if (!ensureCtx()) return;
-      tone(300, 0.3, 'sawtooth', 0.3);
-      setTimeout(() => tone(200, 0.3, 'sawtooth', 0.3), 150);
-      setTimeout(() => tone(100, 0.8, 'sawtooth', 0.35), 300);
-      return;
-    case 'uiClick':
-      tone(660, 0.04, 'sine', 0.15);
-      return;
-    default:
-      return;
+  if (name === 'siren') {
+    if (opts && opts.on) igniteSiren(); else killSiren();
+    return;
   }
+  if (name === 'engine') return; // handled by startEngine / updateEngine
+
+  const fn = soundMap[name];
+  if (fn) fn();
 }
 
-/** Start engine hum; call repeatedly while driving with current speed (0..1 normalised). */
-let _engineOsc = null;
-let _engineGain = null;
-
-export function startEngine() {
-  if (!_initialised || _muted) return;
-  if (!ensureCtx()) return;
-  if (_engineOsc) return;
-  _engineOsc = _ctx.createOscillator();
-  _engineOsc.type = 'sawtooth';
-  _engineOsc.frequency.value = 60;
-  _engineGain = _ctx.createGain();
-  _engineGain.gain.value = 0;
-  _engineOsc.connect(_engineGain).connect(_sfxGain);
-  _engineOsc.start();
-}
-
-export function updateEngine(speedNorm) {
-  if (!_engineOsc || !_ctx) return;
-  const t = _ctx.currentTime;
-  // Clamp normalised speed to [0, 1] to keep pitch in valid range
-  const sn = Math.max(0, Math.min(1, speedNorm));
-  const pitch = 55 + sn * 180; // 55 Hz idle → 235 Hz at full speed
-  _engineOsc.frequency.setTargetAtTime(pitch, t, 0.05);
-  _engineGain.gain.setTargetAtTime(0.04 + sn * 0.08, t, 0.05);
-}
-
-export function stopEngine() {
-  if (_engineOsc) {
-    try { _engineOsc.stop(); } catch (_e) { /* already stopped */ }
-    _engineOsc = null;
-    _engineGain = null;
-  }
-}
-
-export function startMusic() {
-  if (!_initialised) return;
-  _startMusicLoop();
-}
-
-export function stopMusic() {
-  _stopMusic();
-}
-
-export function isMuted() {
-  return _muted;
-}
+export function startEngine() { igniteEngine(); }
+export function updateEngine(n) { tuneEngine(n); }
+export function stopEngine() { killEngine(); }
+export function startMusic() { startGroove(); }
+export function stopMusic() { stopGroove(); }
+export function isMuted() { return muted; }
 
 export function setMuted(val) {
-  _muted = val;
-  if (_masterGain) {
-    _masterGain.gain.setTargetAtTime(val ? 0 : 1, _ctx.currentTime, 0.05);
+  muted = !!val;
+  if (masterBus && audioCtx) {
+    masterBus.gain.setTargetAtTime(val ? 0 : 1, audioCtx.currentTime, 0.04);
   }
 }
 
-export function getContext() {
-  return _ctx;
-}
+export function getContext() { return audioCtx; }
+export function isInitialised() { return ready; }
 
-export function isInitialised() {
-  return _initialised;
-}
-
-/** Convenience: create the engine object (all functions bound). */
+/** Factory: return a single object with all methods bound. */
 export function createAudioEngine() {
   return {
-    init,
-    play,
-    startEngine,
-    updateEngine,
-    stopEngine,
-    startMusic,
-    stopMusic,
-    isMuted,
-    setMuted,
-    getContext,
-    isInitialised,
+    init, play, startEngine, updateEngine, stopEngine,
+    startMusic, stopMusic, isMuted, setMuted, getContext, isInitialised,
   };
 }
