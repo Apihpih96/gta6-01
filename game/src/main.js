@@ -404,7 +404,7 @@ function respawnAt(position, message) {
   playerMesh.position.copy(position);
   playerMesh.visible = true;
   gameState.mode = 'onFoot';
-  gameState.currentVehicle = null;
+  // Clean up any remaining vehicle reference
   if (gameState.currentVehicle) {
     scene.remove(gameState.currentVehicle.mesh);
     const idx = vehicleSystem.vehicles.indexOf(gameState.currentVehicle);

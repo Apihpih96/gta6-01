@@ -85,7 +85,7 @@ export function createMinimap(container) {
       }
     }
 
-    // Police cars (blue flashing dots)
+    // Police cars (blue flashing dots) — use config radius for legend clarity
     if (policeCars && policeCars.length > 0) {
       const flash = Math.sin(performance.now() * 0.008) > 0;
       ctx.fillStyle = flash ? '#4488ff' : '#2244aa';
@@ -97,7 +97,7 @@ export function createMinimap(container) {
       }
     }
 
-    // Officers on foot (small blue squares)
+    // Officers on foot (small blue squares) — larger than regular peds for clarity
     if (officers && officers.length > 0) {
       const flash = Math.sin(performance.now() * 0.008) > 0;
       ctx.fillStyle = flash ? '#4488ff' : '#2244aa';

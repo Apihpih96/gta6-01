@@ -1,5 +1,18 @@
 /**
  * Seeded pseudo-random number generator — mulberry32 with helpers.
+ *
+ * All functions take an `rng` (the function returned by createRNG) as their
+ * first argument so the caller controls which generator is used — this makes
+ * every system independently reproducible from a single world seed.
+ *
+ * Exports:
+ *   createRNG(seed)    — mulberry32 PRNG, returns a () => float function
+ *   randInt(rng, min, max)      — integer in [min, max] inclusive
+ *   randFloat(rng, min, max)    — float in [min, max)
+ *   randChoice(rng, arr)        — random element from array
+ *   shuffle(rng, arr)           — Fisher-Yates in-place
+ *   hashSeed(str)               — string → 32-bit seed (djb2 variant)
+ *   combineSeeds(a, b)          — merge two numeric seeds into one
  */
 
 /** Create a mulberry32 PRNG from a 32-bit seed. */

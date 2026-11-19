@@ -41,9 +41,9 @@ export function createHUD() {
     messageTimer = duration;
   }
 
-  /** Set the persistent objective line. */
+  /** Set the persistent objective line with a maximum length to prevent overflow. */
   function setObjective(text) {
-    objective = text;
+    objective = (text || 'Explore the city').slice(0, 120);
   }
 
   /** Show or hide the contextual interaction prompt. */
@@ -94,9 +94,9 @@ export function createHUD() {
       wantedEl.style.color = state.wanted > 0 ? '#ffcc00' : '#888888';
     }
 
-    // Objective
+    // Objective — ensure text never overlaps with other HUD elements
     if (objectiveEl) {
-      objectiveEl.textContent = objective;
+      objectiveEl.textContent = objective || 'Explore the city';
     }
 
     // Speed — show km/h when moving or driving

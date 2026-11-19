@@ -57,8 +57,9 @@ const MISSIONS = [
     id: 'm3',
     name: 'Shakedown',
     briefing:
-      "Some shopkeepers owe Rico protection money. Go collect from three of them — " +
-      "they'll try to run. One of them might fight back.",
+      "Some shopkeepers owe Rico protection money. Go to each one and collect — " +
+      "they'll try to run when they see you coming. " +
+      "The third one doesn't pay quietly — expect a fight.",
     acceptPos: { x: 10, z: 10 },
     steps: [
       { text: 'Find and punch the first shopkeeper to collect', type: 'goTo', pos: { x: -10, z: -20 } },
@@ -219,7 +220,7 @@ export function createMissionSystem(hud, wantedSystem, combatSystem) {
     }
 
     if (def.id === 'm4') {
-      // Story complete
+      // Story complete — total earnings include all mission rewards
       setTimeout(() => {
         showBanner('STORY COMPLETE! Total earnings: $' + totalEarnings.toLocaleString(), 'storyComplete');
       }, 3500);

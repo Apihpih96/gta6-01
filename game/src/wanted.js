@@ -46,6 +46,7 @@ export function createWantedSystem() {
   /**
    * Update: decay stars and track police proximity.
    * -1 star every starDecayTime seconds while no crime and no police within 60m.
+   * Decay only starts after the full starDecayTime has passed since the last crime.
    */
   function update(dt, state, events) {
     const now = performance.now() / 1000;
@@ -59,22 +60,22 @@ export function createWantedSystem() {
         const dx = pp.x - playerPos.x;
         const dz = pp.z - playerPos.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < 60) {
+        if (dist < WANTED.policeDecayRadius) {
           policeNearby = true;
           break;
         }
       }
     }
 
-    // Decay
+    // Decay: only when enough time has passed since last crime and no police nearby
     if (wantedLevel > 0 && timeSinceCrime > WANTED.starDecayTime && !policeNearby) {
       decayTimer += dt;
       if (decayTimer >= WANTED.starDecayTime) {
         decayTimer = 0;
-        // First decay any remaining heat
+        // First decay any remaining heat, then drop a star
         if (heatAccumulator > 0) {
           heatAccumulator = Math.max(0, heatAccumulator - 1);
-        } else {
+        } else if (wantedLevel > 0) {
           wantedLevel--;
         }
       }

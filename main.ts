@@ -1,6 +1,6 @@
 // Solar Coast — make.fun entry point (Node 22, stdlib only).
 //
-// This file assembles the final submission: it copies the game/ directory and
+// This file assembles the final submission: copies the game/ directory and
 // screenshots/ into the output folder, then writes dossier.json using the
 // vendored make.fun library. The game itself is a three.js open-world that
 // runs with zero network calls — every asset lives under game/.

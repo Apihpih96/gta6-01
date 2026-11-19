@@ -72,7 +72,9 @@ function noiseBurst(duration, filterFreq, gainVal) {
   filt.type = 'lowpass';
   filt.frequency.value = filterFreq;
   const g = _ctx.createGain();
-  g.gain.setValueAtTime(gainVal, _ctx.currentTime);
+  // Clamp gain to avoid clipping through master bus
+  const clampedGain = Math.min(1, Math.max(0.001, gainVal));
+  g.gain.setValueAtTime(clampedGain, _ctx.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, _ctx.currentTime + duration);
   src.connect(filt).connect(g).connect(_sfxGain);
   src.start();
@@ -87,7 +89,9 @@ function tone(freq, duration, type, gainVal, detune) {
   o.frequency.value = freq;
   if (detune) o.detune.value = detune;
   const g = _ctx.createGain();
-  g.gain.setValueAtTime(gainVal || 0.3, _ctx.currentTime);
+  // Clamp gain to prevent pops from excessive volume
+  const clampedGain = Math.min(0.5, Math.max(0.001, gainVal || 0.3));
+  g.gain.setValueAtTime(clampedGain, _ctx.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, _ctx.currentTime + duration);
   o.connect(g).connect(_sfxGain);
   o.start();
@@ -222,9 +226,9 @@ function _stopSiren() {
 export function init() {
   if (_initialised) return;
   const ctx = ensureCtx();
-  if (ctx && ctx.state === 'suspended') {
-    ctx.resume();
-  }
+  if (!ctx) return; // AudioContext not supported
+  // Resume may reject if the browser still considers it a non-gesture context
+  ctx.resume().catch(() => { /* will retry on next gesture */ });
   _initialised = true;
   // Start title-screen ambient music
   _startMusicLoop();
@@ -316,9 +320,11 @@ export function startEngine() {
 export function updateEngine(speedNorm) {
   if (!_engineOsc || !_ctx) return;
   const t = _ctx.currentTime;
-  const pitch = 55 + speedNorm * 180; // 55 Hz idle → 235 Hz at full speed
+  // Clamp normalised speed to [0, 1] to keep pitch in valid range
+  const sn = Math.max(0, Math.min(1, speedNorm));
+  const pitch = 55 + sn * 180; // 55 Hz idle → 235 Hz at full speed
   _engineOsc.frequency.setTargetAtTime(pitch, t, 0.05);
-  _engineGain.gain.setTargetAtTime(0.04 + speedNorm * 0.08, t, 0.05);
+  _engineGain.gain.setTargetAtTime(0.04 + sn * 0.08, t, 0.05);
 }
 
 export function stopEngine() {

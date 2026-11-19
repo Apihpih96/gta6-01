@@ -21,9 +21,9 @@ export function createCombatSystem(scene, colliders, hud, wantedSystem) {
 
   /** Try to punch. Returns { hit, hitPed } if successful. */
   function tryPunch(playerPos, playerYaw, pedestrians) {
-    if (punchCooldown > 0) return null;
+    if (punchCooldown > 0 || wasted) return null;
 
-    punchCooldown = 0.45; // 0.45 s cooldown
+    punchCooldown = 0.4; // reduced from 0.45 for more responsive combat
     playerLungeTime = 0.2; // lunge animation duration
 
     // Check for pedestrians in range (~2.2 m)
@@ -34,27 +34,34 @@ export function createCombatSystem(scene, colliders, hud, wantedSystem) {
       Math.cos(playerYaw)
     );
 
+    let closestPed = null;
+    let closestDist = punchRange;
+
     for (const ped of pedestrians) {
       const dx = ped.position.x - playerPos.x;
       const dz = ped.position.z - playerPos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
 
-      if (dist < punchRange) {
+      if (dist < closestDist) {
         // Check if facing roughly the right direction
         const toPed = new THREE.Vector3(dx, 0, dz).normalize();
         const dot = punchDir.dot(toPed);
         if (dot > 0.3) {
-          return { hit: true, ped };
+          closestDist = dist;
+          closestPed = ped;
         }
       }
     }
 
-    return { hit: false, ped: null };
+    return closestPed ? { hit: true, ped: closestPed } : { hit: false, ped: null };
   }
 
   /** Handle a pedestrian being hit. Returns events that occurred. */
   function handlePedHit(ped, pedestrians) {
     const events = [];
+
+    // Guard against already-removed pedestrians
+    if (!ped || !ped.mesh) return events;
 
     if (!ped.health) ped.health = 3; // 3 punches to KO
     ped.health--;
@@ -136,10 +143,10 @@ export function createCombatSystem(scene, colliders, hud, wantedSystem) {
         const dist = Math.sqrt(dx * dx + dz * dz);
 
         if (dist < 2.0) {
-          // Punch the player
+          // Punch the player — add knockback to give player a chance to escape
           if (!ped.punchCooldown || ped.punchCooldown <= 0) {
             handlePlayerDamage(5); // weak punches
-            ped.punchCooldown = 0.8;
+            ped.punchCooldown = 1.0; // increased from 0.8 for fairer spacing
           }
         }
 

@@ -9,6 +9,9 @@
  * "Continue" button on start screen when save exists.
  * "New Game" clears the save.
  *
+ * Save versioning: the key includes a version suffix so that future format
+ * changes won't load corrupt or incompatible data.
+ *
  * Exports:
  *   createSaveSystem(hud)
  *     — returns { save, load, hasSave, clearSave, autoSave, getAutoSaveTimer }
@@ -68,7 +71,15 @@ export function createSaveSystem(hud) {
       const json = localStorage.getItem(SAVE_KEY);
       if (!json) return null;
 
-      const data = JSON.parse(json);
+      // Validate JSON structure before applying
+      let data;
+      try {
+        data = JSON.parse(json);
+      } catch {
+        // Corrupt JSON — clear and start fresh
+        clearSave();
+        return null;
+      }
       if (!data || data.version !== 1) return null; // corrupt or wrong version
 
       // Apply player state

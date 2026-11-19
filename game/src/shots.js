@@ -2,9 +2,13 @@
  * Deterministic screenshot staging.
  *
  * Read URL params ?shot=<scene>&seed=<n>.
- * Scenes: "start" (title over city), "roam" (player on street), "drive" (behind a car),
- *         "chase" (police pursuit), "mission" (on foot at M1 objective with marker/beacon).
- * Fully deterministic: same seed => same frame.
+ * Scenes:
+ *   "start"   — title screen over city, elevated camera looking across downtown
+ *   "roam"    — player on a busy street corner, fixed over-shoulder camera
+ *   "drive"   — behind a car driving down a main street
+ *   "chase"   — wanted 3, two police cars in pursuit, side-rear angle
+ *   "mission" — on foot at M1 objective with gold beacon and red sedan
+ * Fully deterministic: same seed => same frame, same city layout.
  */
 
 import { hashSeed } from './random.js';

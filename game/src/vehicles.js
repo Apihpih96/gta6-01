@@ -222,9 +222,9 @@ export function createVehicleSystem(scene, seed, colliders, roadData) {
           v.speed *= Math.pow(0.9, dt * 60);
         }
 
-        // Speed-sensitive steering
+        // Speed-sensitive steering — reduced handbrake slide for more control
         const steerFactor = Math.min(1, Math.abs(v.speed) / VEHICLE.steerFadeSpeed);
-        const steerAmount = VEHICLE.steerMax * (1 - steerFactor * 0.6);
+        const steerAmount = VEHICLE.steerMax * (1 - steerFactor * 0.5); // less falloff at high speed
         if (left) v.yaw += steerAmount * Math.sign(v.speed || 0.1);
         if (right) v.yaw -= steerAmount * Math.sign(v.speed || 0.1);
 

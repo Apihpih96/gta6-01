@@ -94,8 +94,9 @@ export function createPoliceSystem(scene, seed, colliders, roadData, hud) {
   /** Spawn a police car off-screen near the player. */
   function spawnPoliceCar(playerPos, onRoad) {
     // Pick a spawn point on a road ~80-120 units from player
+    // Use a minimum distance so police don't appear right next to the player
     const angle = rng() * Math.PI * 2;
-    const dist = 80 + rng() * 40;
+    const dist = 80 + rng() * 40; // 80–120 units away
     const spawnX = playerPos.x + Math.cos(angle) * dist;
     const spawnZ = playerPos.z + Math.sin(angle) * dist;
 
@@ -138,8 +139,9 @@ export function createPoliceSystem(scene, seed, colliders, roadData, hud) {
 
   /** Spawn an on-foot officer near the player. */
   function spawnOfficer(playerPos) {
+    // Officers spawn farther away than cars for fairer encounters
     const angle = rng() * Math.PI * 2;
-    const dist = 30 + rng() * 20;
+    const dist = 40 + rng() * 30; // 40–70 units, not right on top of player
     const spawnX = playerPos.x + Math.cos(angle) * dist;
     const spawnZ = playerPos.z + Math.sin(angle) * dist;
 

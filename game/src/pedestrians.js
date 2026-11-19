@@ -82,6 +82,7 @@ export function createPedestrianSystem(scene, seed, colliders, roadData) {
       position: new THREE.Vector3(bestSpot.x, 0, bestSpot.z),
       yaw: randFloat(rng, 0, Math.PI * 2),
       speed: 0,
+      speedVariation: rng(), // 0..1 → maps to 0.8x–1.2x walk speed
       state: 'walk', // 'walk' | 'pause' | 'flee'
       timer: randFloat(rng, 2, 6),
       targetYaw: randFloat(rng, 0, Math.PI * 2),
@@ -140,10 +141,13 @@ export function createPedestrianSystem(scene, seed, colliders, roadData) {
         }
       }
 
-      // Movement
-      const targetSpeed = p.state === 'flee'
+      // Movement — vary speed per pedestrian so the sidewalk feels alive
+      const baseSpeed = p.state === 'flee'
         ? PEDESTRIANS.fleeSpeed
         : p.state === 'pause' ? 0 : PEDESTRIANS.walkSpeed;
+      // Each pedestrian walks slightly faster or slower (±20%)
+      const speedVariation = 0.8 + (p.speedVariation || 1.0) * 0.4;
+      const targetSpeed = baseSpeed * speedVariation;
 
       p.speed += (targetSpeed - p.speed) * dt * 5;
 

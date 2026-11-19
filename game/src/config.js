@@ -1,16 +1,17 @@
 /**
  * Tuning constants for Solar Coast — speeds, city size, palette, wanted timings.
+ * All values are engine units (1 unit ≈ 1 metre). Adjust in one place, affects all systems.
  */
 
 /** City grid parameters */
 export const CITY = {
-  /** Number of blocks along each axis */
+  /** Number of blocks along each axis (12×12 = 144 blocks) */
   blocksPerAxis: 12,
   /** Width of one block (world units) */
   blockSize: 60,
-  /** Width of a road between blocks */
+  /** Width of a road between blocks (14 units ≈ two lanes + pavement) */
   roadWidth: 14,
-  /** Sidewalk width */
+  /** Sidewalk width alongside each block */
   sidewalkWidth: 3,
   /** Beach side: blocks on the +X edge become beach/water */
   beachEdge: true,
@@ -109,7 +110,7 @@ export const PALETTE = {
   sea: 0x1a8ab5,
   sand: 0xe8c87a,
   concrete: 0xb0b0b0,
-  road: 0x444444,
+  road: 0x5a5a5a,
   roadLine: 0xdddd44,
   sidewalk: 0xc8c0b0,
   buildingBase: [

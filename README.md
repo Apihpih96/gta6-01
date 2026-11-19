@@ -44,7 +44,7 @@ Then open `http://localhost:8080` in your browser.
 
 | Key | Action |
 |-----|--------|
-| WASD | Move / Drive |
+| WASD / Arrows | Move / Drive |
 | Shift | Run |
 | Space | Jump / Handbrake |
 | Mouse | Look / Steer |

@@ -52,7 +52,7 @@ export function createTrafficSystem(scene, seed, roadData, colliders) {
     const dz = pos.z - playerPos.z;
     if (Math.sqrt(dx * dx + dz * dz) < TRAFFIC.spawnDistance * 0.5) return;
 
-    // Create mesh
+    // Create mesh — vary colour and speed per car for visual diversity
     const style = randChoice(rng, ['sedan', 'hatchback', 'pickup', 'van']);
     const color = randChoice(rng, VEHICLE_COLORS);
     const mesh = buildCarMesh(style, color);
@@ -61,11 +61,14 @@ export function createTrafficSystem(scene, seed, roadData, colliders) {
     mesh.rotation.y = yaw;
     scene.add(mesh);
 
+    // Speed varies more widely (±6 m/s) so traffic doesn't look uniform
+    const targetSpeed = TRAFFIC.speed + randFloat(rng, -TRAFFIC.speedVariation - 2, TRAFFIC.speedVariation + 2);
+
     trafficCars.push({
       mesh,
       position: pos.clone(),
       yaw,
-      speed: TRAFFIC.speed + randFloat(rng, -TRAFFIC.speedVariation, TRAFFIC.speedVariation),
+      speed: Math.max(2, targetSpeed), // clamp to minimum 2 m/s
       road,
       t,
       direction,

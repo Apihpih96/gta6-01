@@ -202,15 +202,24 @@ export function createPlayer(scene, cityColliders) {
     state.pitch -= mouse.dy * CAMERA.sensitivity;
     state.pitch = Math.max(-0.5, Math.min(0.8, state.pitch));
 
-    state.cameraDistance += mouse.wheel * 0.01;
+    // Smooth zoom: wheel input is accumulated per frame; apply a fraction
+    state.cameraDistance += mouse.wheel * 0.005;
     state.cameraDistance = Math.max(CAMERA.minDistance, Math.min(CAMERA.maxDistance, state.cameraDistance));
 
     const dist = state.cameraDistance;
-    const camX = state.position.x + Math.sin(state.yaw) * Math.cos(state.pitch) * dist;
-    const camY = state.position.y + CAMERA.heightOffset + Math.sin(state.pitch) * dist * 0.5;
-    const camZ = state.position.z + Math.cos(state.yaw) * Math.cos(state.pitch) * dist;
+    const cosYaw = Math.cos(state.yaw);
+    const sinYaw = Math.sin(state.yaw);
+    const cosPitch = Math.cos(state.pitch);
 
-    camera.position.set(camX, camY, camZ);
+    const camX = state.position.x + sinYaw * cosPitch * dist;
+    const camY = state.position.y + CAMERA.heightOffset + Math.sin(state.pitch) * dist * 0.5;
+    const camZ = state.position.z + cosYaw * cosPitch * dist;
+
+    // Smooth camera movement to reduce jitter during fast mouse movements
+    const smoothing = 0.6;
+    camera.position.x += (camX - camera.position.x) * smoothing;
+    camera.position.y += (camY - camera.position.y) * smoothing;
+    camera.position.z += (camZ - camera.position.z) * smoothing;
     camera.lookAt(state.position.x, state.position.y + 1.2, state.position.z);
   }
 

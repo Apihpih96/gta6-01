@@ -275,9 +275,10 @@ export function buildCity(scene, seed) {
       for (let b = 0; b < numBuildings; b++) {
         const bWidth = randFloat(blockRng, bSpacing * 0.5, bSpacing * 0.85);
         const bDepth = randFloat(blockRng, bSpacing * 0.5, bSpacing * 0.85);
-        const baseHeight = randFloat(blockRng, 8, 40);
+        const baseHeight = randFloat(blockRng, 6, 45);
         const hMult = heightMultiplier(cx + (-blockSize / 2 + bSpacing * b + bSpacing * 0.5), cz);
-        const bHeight = baseHeight * hMult;
+        // Clamp building height to avoid extreme towers at centre
+        const bHeight = Math.min(80, baseHeight * hMult);
         const bOffX = -blockSize / 2 + sidewalkWidth + bSpacing * b + bSpacing * 0.5;
         const bOffZ = -blockSize / 2 + sidewalkWidth + bSpacing * 0.5;
 
@@ -299,10 +300,27 @@ export function buildCity(scene, seed) {
           maxZ: worldZ + bDepth / 2,
         });
 
-        // Palm trees
+        // Palm trees — placed near buildings, clamped to block interior (not on roads)
+        // Ensure palm is not inside the building footprint itself
         if (blockRng() > 0.5) {
-          const palmX = worldX + randFloat(blockRng, bWidth * 0.6, bWidth);
-          const palmZ = worldZ + randFloat(blockRng, -bDepth * 0.3, bDepth * 0.3);
+          let palmX = worldX + randFloat(blockRng, bWidth * 0.5, bWidth * 0.8);
+          let palmZ = worldZ + randFloat(blockRng, -bDepth * 0.2, bDepth * 0.2);
+          // Clamp to block interior (2 units from edge to avoid road overlap)
+          const blockMinX = cx - blockSize / 2 + 2;
+          const blockMaxX = cx + blockSize / 2 - 2;
+          const blockMinZ = cz - blockSize / 2 + 2;
+          const blockMaxZ = cz + blockSize / 2 - 2;
+          palmX = Math.max(blockMinX, Math.min(blockMaxX, palmX));
+          palmZ = Math.max(blockMinZ, Math.min(blockMaxZ, palmZ));
+          // Keep palm outside building footprint (push to nearest edge if inside)
+          const palmHalfW = bWidth / 2 + 0.8;
+          const palmHalfD = bDepth / 2 + 0.8;
+          if (palmX > worldX - palmHalfW && palmX < worldX + palmHalfW &&
+              palmZ > worldZ - palmHalfD && palmZ < worldZ + palmHalfD) {
+            // Push palm to the right of the building
+            palmX = worldX + palmHalfW + 0.5;
+            palmX = Math.min(blockMaxX, palmX);
+          }
           const palmH = randFloat(blockRng, 4, 7);
           const pMat = new THREE.Matrix4();
           pMat.makeTranslation(palmX, 0, palmZ);
